@@ -68,13 +68,13 @@ export default function ProspectDetails() {
     <div className="min-h-screen bg-[#EAF4FB] text-[#1A1A1A]">
       {/* NAVBAR */}
       <nav className="sticky top-0 z-10 bg-white border-b border-[#E5E7EB]">
-        <div className="px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-[#0F6CB6] flex items-center justify-center text-white font-bold">
+        <div className="px-3 sm:px-4 md:px-6 py-3 sm:py-4 flex items-center justify-between gap-2 sm:gap-4">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+            <div className="w-8 sm:w-10 h-8 sm:h-10 rounded-lg sm:rounded-xl bg-[#0F6CB6] flex items-center justify-center text-white font-bold text-xs sm:text-base flex-shrink-0">
               CI
             </div>
-            <div>
-              <div className="text-lg font-semibold text-[#0F6CB6]">
+            <div className="hidden sm:block">
+              <div className="text-sm sm:text-lg font-semibold text-[#0F6CB6]">
                 Care Lead
               </div>
               <div className="text-xs text-[#6B7280]">
@@ -85,31 +85,31 @@ export default function ProspectDetails() {
 
           <button
             onClick={() => navigate("/")}
-            className="text-sm text-[#0F6CB6] hover:underline"
+            className="text-xs sm:text-sm text-[#0F6CB6] hover:underline whitespace-nowrap"
           >
-            ← Back to Dashboard
+            ← Back
           </button>
         </div>
       </nav>
 
       {/* CONTENT */}
-      <div className="p-6 grid grid-cols-12 gap-6">
+      <div className="p-3 sm:p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
         {/* LEFT PANEL */}
-        <div className="col-span-8 bg-white border border-[#E5E7EB] rounded-xl p-5">
+        <div className="lg:col-span-8 bg-white border border-[#E5E7EB] rounded-lg sm:rounded-xl p-3 sm:p-5">
           {/* HEADER */}
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-xl font-semibold">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+            <div className="min-w-0">
+              <h2 className="text-lg sm:text-xl font-semibold truncate">
                 {name ?? "Prospect"}
               </h2>
-              <p className="text-sm text-[#6B7280]">
+              <p className="text-xs sm:text-sm text-[#6B7280]">
                 {phone ?? "Phone not available"}
               </p>
             </div>
 
             <button
               onClick={makeNewCall}
-              className="bg-[#0F6CB6] text-white px-4 py-2 rounded-lg hover:bg-[#0B4F8A]"
+              className="bg-[#0F6CB6] text-white px-3 sm:px-4 py-2 rounded-lg text-sm hover:bg-[#0B4F8A] transition w-full sm:w-auto whitespace-nowrap"
             >
               + Make Call
             </button>
@@ -117,12 +117,12 @@ export default function ProspectDetails() {
 
           {/* CALL CAROUSEL */}
           <Tab.Group>
-            <Tab.List className="flex gap-2 mb-4">
+            <Tab.List className="flex gap-2 mb-4 overflow-x-auto">
               {calls.map((_, idx) => (
                 <Tab
                   key={idx}
                   className={({ selected }) =>
-                    `px-4 py-2 rounded text-sm font-medium transition ${
+                    `px-3 sm:px-4 py-2 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${
                       selected
                         ? "bg-[#0F6CB6] text-white"
                         : "bg-[#EAF4FB] hover:bg-[#FFD400]/30"
@@ -136,17 +136,17 @@ export default function ProspectDetails() {
 
             <Tab.Panels>
               {calls.map((call, idx) => (
-                <Tab.Panel key={idx} className="space-y-6">
+                <Tab.Panel key={idx} className="space-y-4 sm:space-y-6">
                   {/* TRANSCRIPT */}
                   <div>
-                    <div className="text-sm text-[#6B7280] mb-2">
+                    <div className="text-xs sm:text-sm text-[#6B7280] mb-2">
                       Dialogues
                     </div>
-                    <div className="border border-[#E5E7EB] rounded-lg p-4 space-y-3 max-h-64 overflow-y-auto">
+                    <div className="border border-[#E5E7EB] rounded-lg p-3 sm:p-4 space-y-2 sm:space-y-3 max-h-64 overflow-y-auto">
                       {call.transcript.map((msg, i) => (
                         <div
                           key={i}
-                          className={`max-w-[75%] px-3 py-2 rounded text-sm ${
+                          className={`max-w-[90%] sm:max-w-[75%] px-3 py-2 rounded text-xs sm:text-sm ${
                             msg.speaker === "Agent"
                               ? "bg-[#EAF4FB]"
                               : "bg-[#0F6CB6] text-white ml-auto"
@@ -163,15 +163,15 @@ export default function ProspectDetails() {
 
                   {/* SUMMARY */}
                   <div>
-                    <div className="text-sm text-[#6B7280] mb-2">
+                    <div className="text-xs sm:text-sm text-[#6B7280] mb-2">
                       Call Summary
                     </div>
-                    <div className="border border-[#E5E7EB] rounded-lg p-4 text-sm bg-[#FFD400]/10">
+                    <div className="border border-[#E5E7EB] rounded-lg p-3 sm:p-4 text-xs sm:text-sm bg-[#FFD400]/10">
                       {call.summary}
                     </div>
                   </div>
 
-                  <div className="text-center text-sm text-[#6B7280]">
+                  <div className="text-center text-xs sm:text-sm text-[#6B7280]">
                     {idx + 1} of {calls.length}
                   </div>
                 </Tab.Panel>
@@ -181,33 +181,33 @@ export default function ProspectDetails() {
         </div>
 
         {/* RIGHT PANEL */}
-        <div className="col-span-4 space-y-6">
+        <div className="lg:col-span-4 space-y-4 sm:space-y-6">
           {/* SENTIMENT */}
-          <div className="bg-white border border-[#E5E7EB] rounded-xl p-5">
-            <h3 className="font-semibold mb-3">Sentiment Analysis</h3>
+          <div className="bg-white border border-[#E5E7EB] rounded-lg sm:rounded-xl p-3 sm:p-5">
+            <h3 className="font-semibold text-sm sm:text-base mb-3">Sentiment Analysis</h3>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-[#6B7280]">
+              <span className="text-xs sm:text-sm text-[#6B7280]">
                 Overall Sentiment
               </span>
-              <span className="px-3 py-1 rounded-full text-xs bg-green-100 text-green-700">
+              <span className="px-2 sm:px-3 py-1 rounded-full text-xs bg-green-100 text-green-700">
                 Positive
               </span>
             </div>
-            <div className="h-32 bg-[#EAF4FB] rounded flex items-center justify-center text-[#6B7280]">
+            <div className="h-24 sm:h-32 bg-[#EAF4FB] rounded flex items-center justify-center text-xs sm:text-sm text-[#6B7280]">
               Sentiment Timeline
             </div>
           </div>
 
           {/* CONVERSION */}
-          <div className="bg-white border border-[#E5E7EB] rounded-xl p-5">
-            <h3 className="font-semibold mb-3">
+          <div className="bg-white border border-[#E5E7EB] rounded-lg sm:rounded-xl p-3 sm:p-5">
+            <h3 className="font-semibold text-sm sm:text-base mb-3">
               Conversion Probability
             </h3>
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-[#6B7280]">
+              <span className="text-xs sm:text-sm text-[#6B7280]">
                 Likelihood to convert
               </span>
-              <span className="text-sm font-semibold text-[#0F6CB6]">
+              <span className="text-xs sm:text-sm font-semibold text-[#0F6CB6]">
                 {calls[0].conversionProb}%
               </span>
             </div>
