@@ -3,6 +3,7 @@ import Home from "./pages/Home";
 import NewCall from "./pages/NewCall";
 import CallScreen from "./pages/CallScreen";
 import CallSummary from "./pages/CallSummary";
+import ProspectDetails from "./pages/ProspectDetails";
 
 
 export default function App() {
@@ -12,6 +13,7 @@ export default function App() {
       <Route path="/new-call" element={<NewCall />} />
       <Route path="/call/:callId" element={<CallScreen />} />
       <Route path="/call-summary" element={<CallSummary />} />
+      <Route path="/prospect/:id" element={<ProspectDetails />} />
     </Routes>
   );
 }

@@ -44,6 +44,19 @@ export default function Home() {
 };
 
 
+
+const goToProspectDetails = (lead: Lead) => {
+  navigate(`/prospect/${encodeURIComponent(lead.name)}`, {
+    state: {
+      name: lead.name,
+      phone: lead.contact,
+    },
+  });
+};
+
+
+
+
   return (
     <div className="min-h-screen bg-[#EAF4FB] text-[#1A1A1A]">
       {/* NAVBAR */}
@@ -137,10 +150,12 @@ export default function Home() {
             </div>
 
             {leads.map((lead, i) => (
-              <div
-                key={i}
-                className="grid grid-cols-5 items-center py-3 border-b border-[#E5E7EB] last:border-none"
-              >
+  <div
+    key={i}
+    onClick={() => goToProspectDetails(lead)}
+    className="grid grid-cols-5 items-center py-3 border-b border-[#E5E7EB] last:border-none cursor-pointer hover:bg-[#EAF4FB]"
+  >
+
                 <span>{lead.name}</span>
                 <span className="font-medium text-[#0F6CB6]">
                   {lead.conversion}%
@@ -148,11 +163,15 @@ export default function Home() {
                 <IntentBadge intent={lead.intent} />
                 <span>{lead.contact}</span>
                 <button
-  onClick={() => startCallFromTable(lead)}
+  onClick={(e) => {
+    e.stopPropagation(); 
+    startCallFromTable(lead);
+  }}
   className="justify-self-end bg-[#FFD400] px-3 py-1 rounded text-sm hover:opacity-90"
 >
   Call
 </button>
+
 
               </div>
             ))}
