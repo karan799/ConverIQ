@@ -4,6 +4,7 @@ import NewCall from "./pages/NewCall";
 import CallScreen from "./pages/CallScreen";
 import CallSummary from "./pages/CallSummary";
 import ProspectDetails from "./pages/ProspectDetails";
+import AudioScreen from "./pages/AudioScreen";
 
 
 export default function App() {
@@ -14,6 +15,7 @@ export default function App() {
       <Route path="/call/:callId" element={<CallScreen />} />
       <Route path="/call-summary" element={<CallSummary />} />
       <Route path="/prospect/:id" element={<ProspectDetails />} />
+      <Route path="/audio" element={<AudioScreen />} />
     </Routes>
   );
 }
