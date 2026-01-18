@@ -78,7 +78,7 @@ const endCall = () => {
       <div className="p-3 sm:p-4 md:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 h-[calc(100vh-70px)] sm:h-[calc(100vh-80px)]">
         {/* TRANSCRIPT */}
         <div className="lg:col-span-8 bg-white border border-[#E5E7EB] rounded-lg sm:rounded-xl p-3 sm:p-5 flex flex-col overflow-hidden">
-          <h2 className="text-sm sm:text-lg font-semibold mb-4 flex-shrink-0">
+          <h2 className="text-sm sm:text-lg font-semibold mb-4 shrink-0">
             Client: {callData.name || "Client"}
           </h2>
 
