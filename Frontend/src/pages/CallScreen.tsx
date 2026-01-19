@@ -19,6 +19,7 @@ export default function CallScreen() {
   const [clientInput, setClientInput] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [transcriptionStatus, setTranscriptionStatus] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasInitialized = useRef(false);
 
@@ -114,10 +115,16 @@ export default function CallScreen() {
 
     setIsUploading(true);
     setUploadError(null);
+    setTranscriptionStatus('Uploading and processing audio...');
 
     try {
       const result = await socketService.uploadAudio(callId || '', file);
       console.log(`Audio processed: ${result.messages_processed} messages extracted`);
+      setTranscriptionStatus(`✓ Transcribed ${result.messages_processed} messages`);
+      
+      // Clear status after 3 seconds
+      setTimeout(() => setTranscriptionStatus(''), 3000);
+      
       // Clear the file input
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -125,6 +132,7 @@ export default function CallScreen() {
     } catch (error: any) {
       console.error('Audio upload failed:', error);
       setUploadError(error.message || 'Failed to process audio file');
+      setTranscriptionStatus('');
     } finally {
       setIsUploading(false);
     }
@@ -240,7 +248,10 @@ const endCall = () => {
               {uploadError && (
                 <p className="text-red-500 text-xs mt-1">{uploadError}</p>
               )}
-              <p className="text-xs text-gray-500 mt-1">Upload an audio file to automatically transcribe and analyze the conversation</p>
+              {transcriptionStatus && (
+                <p className="text-blue-600 text-xs mt-1 font-medium">{transcriptionStatus}</p>
+              )}
+              <p className="text-xs text-gray-500 mt-1">Upload an audio file to automatically transcribe and analyze the conversation. Messages will appear as they're transcribed.</p>
             </div>
 
             <div className="border-t pt-2">

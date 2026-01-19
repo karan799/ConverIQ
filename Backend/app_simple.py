@@ -94,15 +94,17 @@ def upload_audio():
         temp_path = processor.save_uploaded_file(audio_file.read(), filename)
         
         try:
-            # Process audio file
+            # Process audio file with streaming callback
             print(f"Processing audio file for call_id: {call_id}")
-            messages = processor.process_audio_file(temp_path)
             
-            # Process each extracted message through ML engine
+            # Get ML engine
             ml_engine = get_ml_engine()
             processed_count = 0
             
-            for msg_data in messages:
+            # Define callback for streaming transcription
+            def on_segment_transcribed(msg_data):
+                nonlocal processed_count
+                
                 speaker = msg_data['speaker']
                 text = msg_data['text']
                 
@@ -148,11 +150,9 @@ def upload_audio():
                 }, room=call_id)
                 
                 processed_count += 1
-                
-                # Add delay to simulate live chat streaming (1.5 seconds between messages)
-                # Skip delay for the last message
-                if processed_count < len(messages):
-                    time.sleep(1.5)
+            
+            # Process audio file with streaming
+            processor.process_audio_file_streaming(temp_path, on_segment_transcribed)
             
             return jsonify({
                 'success': True,
