@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
+interface TranscriptMessage {
+  speaker: string;
+  text: string;
+}
+
 export default function AudioCallAnalyzer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
