@@ -47,17 +47,21 @@ class MLScoringEngine:
             return {'label': 'NEUTRAL', 'score': 0.5}
     
     def extract_buying_signals(self, text):
-        """Extract buying signals from text"""
+        """Extract buying signals from text with evidence"""
         text_lower = text.lower()
         
-        positive_count = sum(1 for signal in self.positive_signals if signal in text_lower)
-        negative_count = sum(1 for signal in self.negative_signals if signal in text_lower)
-        urgency_count = sum(1 for signal in self.urgency_signals if signal in text_lower)
+        # Track which signals were found with evidence
+        positive_found = [signal for signal in self.positive_signals if signal in text_lower]
+        negative_found = [signal for signal in self.negative_signals if signal in text_lower]
+        urgency_found = [signal for signal in self.urgency_signals if signal in text_lower]
         
         return {
-            'positive_signals': positive_count,
-            'negative_signals': negative_count,
-            'urgency_signals': urgency_count
+            'positive_signals': len(positive_found),
+            'negative_signals': len(negative_found),
+            'urgency_signals': len(urgency_found),
+            'positive_keywords': positive_found,
+            'negative_keywords': negative_found,
+            'urgency_keywords': urgency_found
         }
     
     def calculate_conversation_score(self, messages, conversation_metadata=None):
@@ -113,27 +117,66 @@ class MLScoringEngine:
         total_score = sentiment_score + buying_signal_score + message_count_score + response_quality
         total_score = max(0, min(100, total_score))  # Clamp between 0-100
         
-        # Determine contributing factors
+        # Determine contributing factors with detailed evidence
         factors = []
+        
         if avg_sentiment > 0.6:
-            factors.append(f"Positive sentiment ({avg_sentiment:.2f})")
+            factors.append({
+                'type': 'sentiment',
+                'label': f"Positive sentiment ({avg_sentiment:.2f})",
+                'evidence': 'Customer responses show positive tone and language',
+                'score': avg_sentiment
+            })
         elif avg_sentiment < 0.4:
-            factors.append(f"Negative sentiment ({avg_sentiment:.2f})")
+            factors.append({
+                'type': 'sentiment',
+                'label': f"Negative sentiment ({avg_sentiment:.2f})",
+                'evidence': 'Customer responses show negative or hesitant tone',
+                'score': avg_sentiment
+            })
         
         if signals['positive_signals'] > 0:
-            factors.append(f"{signals['positive_signals']} buying signals detected")
+            keywords_str = ', '.join([f'"{kw}"' for kw in signals['positive_keywords'][:5]])  # Show first 5
+            factors.append({
+                'type': 'buying_signals',
+                'label': f"{signals['positive_signals']} buying signals detected",
+                'evidence': f"Keywords found: {keywords_str}",
+                'keywords': signals['positive_keywords']
+            })
         
         if signals['urgency_signals'] > 0:
-            factors.append(f"Urgency indicators present")
+            keywords_str = ', '.join([f'"{kw}"' for kw in signals['urgency_keywords']])
+            factors.append({
+                'type': 'urgency',
+                'label': "Urgency indicators present",
+                'evidence': f"Urgency keywords detected: {keywords_str}",
+                'keywords': signals['urgency_keywords']
+            })
         
         if signals['negative_signals'] > 2:
-            factors.append(f"Multiple objections detected")
+            keywords_str = ', '.join([f'"{kw}"' for kw in signals['negative_keywords'][:5]])
+            factors.append({
+                'type': 'objections',
+                'label': f"Multiple objections detected",
+                'evidence': f"Objection keywords found: {keywords_str}",
+                'keywords': signals['negative_keywords']
+            })
         
         if len(customer_messages) > 5:
-            factors.append("High engagement level")
+            factors.append({
+                'type': 'engagement',
+                'label': "High engagement level",
+                'evidence': f"Customer sent {len(customer_messages)} messages showing active participation",
+                'message_count': len(customer_messages)
+            })
         
         if not factors:
-            factors.append("Conversation in early stage")
+            factors.append({
+                'type': 'early_stage',
+                'label': "Conversation in early stage",
+                'evidence': 'Not enough data to determine clear buying intent yet',
+                'message_count': len(customer_messages)
+            })
         
         return {
             'score': round(total_score, 2),

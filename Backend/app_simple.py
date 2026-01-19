@@ -9,19 +9,23 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 from datetime import datetime
 import json
 import os
+import time
+from werkzeug.utils import secure_filename
 
 from ml_engine import MLScoringEngine
+from audio_processor import AudioProcessor
 
 # Initialize Flask app
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'dev-secret-key'
-CORS(app, resources={r"/*": {"origins": ["http://localhost:5174", "http://127.0.0.1:5174"]}})
+CORS(app, resources={r"/*": {"origins": ["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"]}})
 
 # Initialize SocketIO with CORS
-socketio = SocketIO(app, cors_allowed_origins=["http://localhost:5174", "http://127.0.0.1:5174"], async_mode='threading', logger=True, engineio_logger=True)
+socketio = SocketIO(app, cors_allowed_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:5174", "http://127.0.0.1:5174"], async_mode='threading', logger=True, engineio_logger=True)
 
 # Initialize ML Engine (singleton)
 ml_engine = None
+audio_processor = None
 
 def get_ml_engine():
     global ml_engine
@@ -30,6 +34,14 @@ def get_ml_engine():
         ml_engine = MLScoringEngine()
         print("ML Engine ready!")
     return ml_engine
+
+def get_audio_processor():
+    global audio_processor
+    if audio_processor is None:
+        print("Initializing Audio Processor...")
+        audio_processor = AudioProcessor()
+        print("Audio Processor ready!")
+    return audio_processor
 
 # In-memory storage for conversations
 conversations_db = {}
@@ -54,6 +66,109 @@ def get_conversation(call_id):
         return jsonify({'error': 'Conversation not found'}), 404
     
     return jsonify(conversations_db[call_id])
+
+@app.route('/api/upload_audio', methods=['POST'])
+def upload_audio():
+    """Handle audio file upload and process it"""
+    try:
+        # Get call_id from form data
+        call_id = request.form.get('call_id')
+        if not call_id:
+            return jsonify({'error': 'call_id is required'}), 400
+        
+        # Check if conversation exists
+        if call_id not in active_conversations:
+            return jsonify({'error': 'Conversation not found. Start a conversation first.'}), 404
+        
+        # Get uploaded file
+        if 'audio' not in request.files:
+            return jsonify({'error': 'No audio file provided'}), 400
+        
+        audio_file = request.files['audio']
+        if audio_file.filename == '':
+            return jsonify({'error': 'No audio file selected'}), 400
+        
+        # Save file temporarily
+        processor = get_audio_processor()
+        filename = secure_filename(audio_file.filename)
+        temp_path = processor.save_uploaded_file(audio_file.read(), filename)
+        
+        try:
+            # Process audio file
+            print(f"Processing audio file for call_id: {call_id}")
+            messages = processor.process_audio_file(temp_path)
+            
+            # Process each extracted message through ML engine
+            ml_engine = get_ml_engine()
+            processed_count = 0
+            
+            for msg_data in messages:
+                speaker = msg_data['speaker']
+                text = msg_data['text']
+                
+                # Get conversation history
+                conversation_history = active_conversations[call_id]['messages']
+                
+                # Process message with ML engine
+                result = ml_engine.process_message(text, speaker, conversation_history)
+                
+                # Create message object
+                message = {
+                    'id': len(conversations_db[call_id]['messages']) + 1,
+                    'speaker': speaker,
+                    'text': text,
+                    'sentiment_score': result['message']['sentiment_score'],
+                    'sentiment_label': result['message']['sentiment_label'],
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                
+                # Create prediction object
+                prediction = {
+                    'id': len(conversations_db[call_id]['predictions']) + 1,
+                    'conversion_score': result['conversation_score'],
+                    'factors': result['factors'],
+                    'timestamp': datetime.utcnow().isoformat()
+                }
+                
+                # Update in-memory storage
+                conversations_db[call_id]['messages'].append(message)
+                conversations_db[call_id]['predictions'].append(prediction)
+                conversations_db[call_id]['final_score'] = result['conversation_score']
+                active_conversations[call_id]['messages'].append(result['message'])
+                
+                # Emit message to all clients in the room via SocketIO
+                socketio.emit('new_message', {'message': message}, room=call_id)
+                
+                # Emit updated prediction
+                socketio.emit('prediction_update', {
+                    'conversion_score': result['conversation_score'],
+                    'factors': result['factors'],
+                    'metrics': result['metrics'],
+                    'timestamp': datetime.utcnow().isoformat()
+                }, room=call_id)
+                
+                processed_count += 1
+                
+                # Add delay to simulate live chat streaming (1.5 seconds between messages)
+                # Skip delay for the last message
+                if processed_count < len(messages):
+                    time.sleep(1.5)
+            
+            return jsonify({
+                'success': True,
+                'messages_processed': processed_count,
+                'call_id': call_id
+            })
+            
+        finally:
+            # Clean up temporary file
+            processor.cleanup_temp_file(temp_path)
+            
+    except Exception as e:
+        print(f'Error processing audio upload: {e}')
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Failed to process audio: {str(e)}'}), 500
 
 # WebSocket Events
 @socketio.on('connect')
