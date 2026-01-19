@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 interface TranscriptMessage {
   speaker: string;
@@ -6,83 +6,73 @@ interface TranscriptMessage {
 }
 
 export default function AudioCallAnalyzer() {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [messages, setMessages] = useState<TranscriptMessage[]>([]);
-  const [score, setScore] = useState(0);
-  
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  /* ---------- Auto Scroll ---------- */
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [score, setScore] = useState(78);
 
-  /* ---------- Audio Upload ---------- */
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
     setAudioFile(file);
-    setMessages([]);
-    setScore(0);
-
-    audioRef.current = new Audio(URL.createObjectURL(file));
   };
-
-  const startAudio = () => {
-    audioRef.current?.play();
-    setIsPlaying(true);
-  };
-
-  const pauseAudio = () => {
-    audioRef.current?.pause();
-    setIsPlaying(false);
-  };
-
-  /* ---------- Simulated Backend Push ---------- */
-  useEffect(() => {
-    if (!isPlaying) return;
-
-    const fakeStream = setInterval(() => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          speaker: Math.random() > 0.5 ? "Agent" : "Client",
-          text: "Live transcript coming from backend...",
-        },
-      ]);
-      setScore((s) => Math.min(s + 5, 92));
-    }, 2000);
-
-    return () => clearInterval(fakeStream);
-  }, [isPlaying]);
-
 
   return (
-    <div className="min-h-screen bg-[#EAF4FB] p-6 text-[#1A1A1A]">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-[#0F6CB6]">
-          Audio Call Analysis
-        </h1>
-        <p className="text-sm text-[#6B7280]">
-          Upload recorded call & analyze customer intent
-        </p>
-      </div>
+    <div className="min-h-screen bg-[#EEF6FC] text-[#1A1A1A] flex flex-col">
+      {/* NAVBAR */}
+      <nav className="bg-white border-b">
+        <div className="px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 bg-[#0F6CB6] rounded-lg text-white flex items-center justify-center font-bold">
+              CI
+            </div>
+            <div>
+              <div className="font-semibold text-[#0F6CB6]">
+                Care Lead
+              </div>
+              <div className="text-xs text-gray-500">
+                Prospect Intelligence
+              </div>
+            </div>
+          </div>
+          <button className="text-sm text-[#0F6CB6]">← Back</button>
+        </div>
+      </nav>
 
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* LEFT: Upload & Controls */}
-        <div className="lg:col-span-4 bg-white rounded-xl border p-5 space-y-4">
-          <h2 className="font-semibold">Upload Call Recording</h2>
+      {/* MAIN CONTENT */}
+      <div className="flex-1 p-6 grid grid-cols-12 gap-6">
+        {/* LEFT: TRANSCRIPTION */}
+        <div className="col-span-8 bg-white border rounded-xl p-6 flex flex-col">
+          <h2 className="font-semibold text-lg mb-4">
+            Call Transcription
+          </h2>
 
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="relative border-2 border-dashed border-[#0F6CB6] rounded-lg p-8 cursor-pointer transition-colors hover:bg-[#EAF4FB] hover:border-[#0D5BA0]"
-          >
+          <div className="flex-1 bg-[#F8FAFC] border rounded-lg p-4 overflow-y-auto text-sm text-gray-700 leading-relaxed">
+            <p className="mb-3">
+              Hello, I’m calling from Care Lead Insurance regarding
+              health insurance plans suitable for you.
+            </p>
+            <p className="mb-3">
+              The client asked about hospitalization coverage,
+              premium ranges, and critical illness benefits.
+            </p>
+            <p>
+              Overall, the client showed positive intent and was
+              receptive to further discussion.
+            </p>
+          </div>
+
+          <div className="mt-4 text-xs text-gray-500">
+            Transcription generated using speech-to-text analysis
+          </div>
+        </div>
+
+        {/* RIGHT: CONTROLS + ANALYTICS */}
+        <div className="col-span-4 flex flex-col gap-6">
+          {/* Upload */}
+          <div className="bg-white border rounded-xl p-5">
+            <h3 className="font-semibold mb-3">Audio File</h3>
+
             <input
               ref={fileInputRef}
               type="file"
@@ -90,87 +80,74 @@ export default function AudioCallAnalyzer() {
               onChange={handleUpload}
               className="hidden"
             />
-            <div className="flex flex-col items-center justify-center gap-2">
-              <svg
-                className="w-8 h-8 text-[#0F6CB6]"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                />
-              </svg>
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full bg-[#0F6CB6] text-white py-2 rounded-lg text-sm"
+            >
+              Upload Audio
+            </button>
+
+            {audioFile && (
+              <div className="mt-2 text-xs text-gray-500 truncate">
+                {audioFile.name}
+              </div>
+            )}
+          </div>
+
+          {/* Playback */}
+          <div className="bg-white border rounded-xl p-5">
+            <h3 className="font-semibold mb-3">Playback Controls</h3>
+            <div className="flex gap-3">
+              <button className="flex-1 bg-[#0F6CB6] text-white py-2 rounded-lg text-sm">
+                Start
+              </button>
+              <button className="flex-1 bg-[#FFD400] py-2 rounded-lg text-sm">
+                Pause
+              </button>
+            </div>
+          </div>
+
+          {/* Sentiment */}
+          <div className="bg-white border rounded-xl p-5">
+            <h3 className="font-semibold mb-3">Sentiment Analysis</h3>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-gray-500">
+                Overall Sentiment
+              </span>
+              <span className="px-3 py-1 text-xs rounded-full bg-green-100 text-green-700">
+                Positive
+              </span>
+            </div>
+            <div className="mt-4 h-24 bg-[#EAF4FB] rounded-lg flex items-center justify-center text-xs text-gray-500">
+              Sentiment Timeline
+            </div>
+          </div>
+
+          {/* Conversion */}
+          <div className="bg-white border rounded-xl p-5">
+            <h3 className="font-semibold mb-2">
+              Conversion Probability
+            </h3>
+            <div className="flex justify-between text-sm mb-2">
+              <span className="text-gray-500">
+                Likelihood to convert
+              </span>
               <span className="font-medium text-[#0F6CB6]">
-                {audioFile ? audioFile.name : "Click to upload audio"}
-              </span>
-              <span className="text-xs text-[#6B7280]">
-                {audioFile
-                  ? `${(audioFile.size / 1024 / 1024).toFixed(2)} MB`
-                  : "MP3, WAV, M4A, etc."}
+                {score}%
               </span>
             </div>
-          </div>
 
-          <div className="flex gap-3">
-            <button
-              onClick={startAudio}
-              disabled={!audioFile || isPlaying}
-              className="flex-1 bg-[#0F6CB6] text-white py-2 rounded-lg disabled:opacity-50"
-            >
-              ▶ Start
-            </button>
-
-            <button
-              onClick={pauseAudio}
-              disabled={!isPlaying}
-              className="flex-1 bg-[#FFD400] py-2 rounded-lg disabled:opacity-50"
-            >
-              ⏸ Pause
-            </button>
-          </div>
-
-          {/* Score */}
-          <div>
-            <div className="text-sm font-medium mb-1">
-              Conversion Score
-            </div>
             <div className="w-full bg-gray-200 rounded-full h-3">
               <div
                 className="bg-[#0F6CB6] h-3 rounded-full"
                 style={{ width: `${score}%` }}
               />
             </div>
-            <p className="text-xs text-[#6B7280] mt-1">
-              {score}% likelihood to convert
+
+            <p className="text-xs text-gray-500 mt-2">
+              High probability based on intent and engagement
             </p>
-          </div>
-        </div>
-
-        {/* RIGHT: Transcript */}
-        <div className="lg:col-span-8 bg-white rounded-xl border p-5 flex flex-col">
-          <h2 className="font-semibold mb-4">Live Transcript</h2>
-
-          <div className="flex-1 overflow-y-auto space-y-3 pr-2">
-            {messages.map((msg, idx) => (
-              <div
-                key={idx}
-                className={`max-w-[75%] px-4 py-2 rounded-lg text-sm ${
-                  msg.speaker === "Agent"
-                    ? "bg-[#EAF4FB]"
-                    : "bg-[#0F6CB6] text-white ml-auto"
-                }`}
-              >
-                <div className="text-xs opacity-70 mb-1">
-                  {msg.speaker}
-                </div>
-                {msg.text}
-              </div>
-            ))}
-            <div ref={messagesEndRef} />
           </div>
         </div>
       </div>
