@@ -1,27 +1,31 @@
-import { useEffect, useState, useRef } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useEffect, useState, useRef, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import socketService from "../services/socketService";
-import type { Message, PredictionUpdate, TranscriptionProgress } from "../services/socketService";
+import type { Message, PredictionUpdate } from "../services/socketService";
 
-export default function CallScreen() {
+export default function LiveCallScreen() {
   const navigate = useNavigate();
-  const { callId } = useParams();
+  const [callId] = useState(() => `live-${Date.now()}`);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const callData = JSON.parse(localStorage.getItem("currentCall") || "{}");
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [score, setScore] = useState(0);
   const [factors, setFactors] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<any>({});
   const [isConnected, setIsConnected] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [transcriptionStatus, setTranscriptionStatus] = useState<string>("");
-  const [transcriptionProgress, setTranscriptionProgress] = useState<TranscriptionProgress | null>(null);
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingTime, setRecordingTime] = useState(0);
+  const [audioLevel, setAudioLevel] = useState(0);
+  
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const chunkIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const hasInitialized = useRef(false);
+  const isRecordingRef = useRef(false);
+  const audioChunksRef = useRef<Blob[]>([]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
@@ -42,12 +46,7 @@ export default function CallScreen() {
         await socketService.connect();
         setIsConnected(true);
 
-        socketService.startConversation(
-          callId || '',
-          'Agent',
-          callData.name || 'Customer',
-          callData.phone || ''
-        );
+        socketService.startConversation(callId, 'Agent', 'Live Client', '');
 
         socketService.onNewMessage((data) => {
           setMessages((prev) => [...prev, data.message]);
@@ -61,48 +60,17 @@ export default function CallScreen() {
 
         socketService.onError((data) => {
           console.error('Socket error:', data.message);
-          setUploadError(data.message);
-        });
-
-        socketService.onConversationStarted((data) => {
-          console.log('Conversation started:', data);
-        });
-
-        socketService.onTranscriptionProgress((data) => {
-          setTranscriptionProgress(data);
-          setTranscriptionStatus(data.status);
-          setIsTranscribing(true);
-        });
-
-        socketService.onTranscriptionComplete((data) => {
-          setTranscriptionStatus(`Complete! ${data.messages_count} messages extracted.`);
-          setIsTranscribing(false);
-          setTranscriptionProgress(null);
-          setTimeout(() => setTranscriptionStatus(''), 5000);
-        });
-
-        socketService.onTranscriptionError((data) => {
-          setUploadError(data.error);
-          setIsTranscribing(false);
-          setTranscriptionProgress(null);
-        });
-
-        socketService.onTranscriptionStopped((data) => {
-          setTranscriptionStatus(`Stopped. ${data.messages_count} messages extracted.`);
-          setIsTranscribing(false);
-          setTranscriptionProgress(null);
-          setTimeout(() => setTranscriptionStatus(''), 5000);
         });
 
       } catch (error) {
         console.error('Failed to connect:', error);
-        setUploadError('Failed to connect to server. Please ensure the backend is running.');
       }
     };
 
     initSocket();
 
     return () => {
+      stopRecording();
       if (socketService.isConnected()) {
         socketService.offAllListeners();
         socketService.disconnect();
@@ -110,182 +78,267 @@ export default function CallScreen() {
     };
   }, []);
 
-  const handleAudioUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const validTypes = ['audio/mpeg', 'audio/wav', 'audio/mp3', 'audio/x-m4a', 'audio/mp4'];
-    if (!validTypes.includes(file.type) && !file.name.match(/\.(mp3|wav|m4a|mp4)$/i)) {
-      setUploadError('Please upload a valid audio file (MP3, WAV, M4A)');
-      return;
-    }
-
-    setIsUploading(true);
-    setUploadError(null);
-    setTranscriptionStatus('Uploading audio...');
-    setIsTranscribing(true);
-    setMessages([]);
-    setScore(0);
-    setFactors([]);
-    setMetrics({});
-
-    try {
-      await socketService.uploadAudio(callId || '', file);
-      setTranscriptionStatus('Transcribing... Messages will appear in real-time.');
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+  // Update recording time
+  useEffect(() => {
+    if (isRecording) {
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingTime(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
       }
-    } catch (error: any) {
-      setUploadError(error.message || 'Failed to upload audio file');
-      setTranscriptionStatus('');
-      setIsTranscribing(false);
-    } finally {
-      setIsUploading(false);
+    }
+    return () => {
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current);
+      }
+    };
+  }, [isRecording]);
+
+  // Audio level visualization
+  const updateAudioLevel = useCallback(() => {
+    if (analyserRef.current) {
+      const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+      analyserRef.current.getByteFrequencyData(dataArray);
+      const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+      setAudioLevel(average / 255);
+    }
+    if (isRecording) {
+      requestAnimationFrame(updateAudioLevel);
+    }
+  }, [isRecording]);
+
+  const startRecording = async () => {
+    try {
+      // Request microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        } 
+      });
+      streamRef.current = stream;
+
+      // Setup audio analysis for visualization
+      audioContextRef.current = new AudioContext();
+      analyserRef.current = audioContextRef.current.createAnalyser();
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      source.connect(analyserRef.current);
+      analyserRef.current.fftSize = 256;
+
+      // Check supported mimeTypes
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/mp4';
+        }
+      }
+      console.log('Using mimeType:', mimeType);
+
+      // Setup MediaRecorder
+      const mediaRecorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = mediaRecorder;
+
+      // Clear audio chunks
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        console.log('Audio data available:', event.data.size, 'bytes');
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      // Set recording state
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      setRecordingTime(0);
+
+      // Send audio chunks every 5 seconds
+      const sendChunks = () => {
+        console.log('Interval check - chunks:', audioChunksRef.current.length, 'recording:', isRecordingRef.current);
+        if (audioChunksRef.current.length > 0 && isRecordingRef.current) {
+          const chunks = [...audioChunksRef.current]; // Copy array
+          audioChunksRef.current = []; // Clear the array
+          
+          const audioBlob = new Blob(chunks, { type: 'audio/webm' });
+          console.log('Sending audio chunk:', audioBlob.size, 'bytes');
+          
+          // Send to backend (non-blocking)
+          sendAudioChunk(audioBlob).catch(err => {
+            console.error('Failed to send chunk:', err);
+          });
+        }
+      };
+      
+      chunkIntervalRef.current = setInterval(sendChunks, 5000);
+
+      mediaRecorder.start(1000); // Collect data every second
+      console.log('MediaRecorder started');
+      updateAudioLevel();
+
+    } catch (error) {
+      console.error('Failed to start recording:', error);
+      alert('Could not access microphone. Please allow microphone permissions.');
     }
   };
 
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file && fileInputRef.current) {
-      const dt = new DataTransfer();
-      dt.items.add(file);
-      fileInputRef.current.files = dt.files;
-      fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true }));
+  const stopRecording = () => {
+    console.log('Stopping recording...');
+    isRecordingRef.current = false;
+    
+    if (chunkIntervalRef.current) {
+      clearInterval(chunkIntervalRef.current);
+      chunkIntervalRef.current = null;
+    }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+    setIsRecording(false);
+    setAudioLevel(0);
+  };
+
+  const sendAudioChunk = async (audioBlob: Blob) => {
+    try {
+      console.log('Preparing to send chunk, size:', audioBlob.size);
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'chunk.webm');
+      formData.append('call_id', callId);
+      formData.append('is_live', 'true');
+
+      const response = await fetch('http://localhost:5000/api/upload_live_audio', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+      console.log('Server response:', result);
+
+      if (!response.ok) {
+        console.error('Failed to send audio chunk:', result);
+      }
+    } catch (error) {
+      console.error('Error sending audio chunk:', error);
     }
   };
 
-  const stopTranscription = () => {
-    socketService.stopTranscription(callId || '');
-    setIsTranscribing(false);
-    setTranscriptionProgress(null);
-    setTranscriptionStatus('Transcription stopped');
-    setTimeout(() => setTranscriptionStatus(''), 3000);
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   const endCall = () => {
+    stopRecording();
     if (callId) {
       socketService.endConversation(callId);
     }
     socketService.disconnect();
-    navigate("/call-summary");
+    navigate("/");
   };
 
-  const progressPercent = transcriptionProgress && transcriptionProgress.total > 0 
-    ? (transcriptionProgress.chunk / transcriptionProgress.total) * 100 
-    : 0;
-
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900">
       {/* Header */}
       <nav className="bg-black/30 backdrop-blur-sm border-b border-white/10">
         <div className="px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold">
-              CI
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-red-500 to-orange-500 flex items-center justify-center text-white font-bold">
+              🎙️
             </div>
             <div>
-              <div className="text-white font-semibold">ConverIQ</div>
-              <div className="text-xs text-purple-300">Real-Time Transcription</div>
+              <div className="text-white font-semibold">ConverIQ Live</div>
+              <div className="text-xs text-orange-300">Real-Time Recording</div>
             </div>
           </div>
-          <button
-            onClick={endCall}
-            className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-sm font-medium hover:bg-red-500/30 transition"
-          >
-            End Session
-          </button>
+          <div className="flex items-center gap-4">
+            {isRecording && (
+              <div className="flex items-center gap-2 px-3 py-1.5 bg-red-500/20 rounded-full border border-red-500/30">
+                <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>
+                <span className="text-red-400 text-sm font-mono">{formatTime(recordingTime)}</span>
+              </div>
+            )}
+            <button
+              onClick={endCall}
+              className="px-4 py-2 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-sm font-medium hover:bg-red-500/30 transition"
+            >
+              End Session
+            </button>
+          </div>
         </div>
       </nav>
 
       <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 h-[calc(100vh-72px)] overflow-hidden">
         {/* Left Sidebar - Analytics */}
         <div className="lg:col-span-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin">
-          {/* Upload Card */}
-          <div 
-            className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4"
-            onDrop={handleDrop}
-            onDragOver={(e) => e.preventDefault()}
-          >
-            <h2 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
-              <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-              </svg>
-              Upload Audio
+          
+          {/* Recording Control */}
+          <div className="bg-gradient-to-br from-red-900/50 to-orange-900/50 backdrop-blur-sm border border-red-500/20 rounded-xl p-4">
+            <h2 className="text-white font-semibold text-sm mb-4 flex items-center gap-2">
+              🎙️ Live Recording
             </h2>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="audio/*,.mp3,.wav,.m4a"
-              onChange={handleAudioUpload}
-              disabled={isUploading || isTranscribing}
-              className="hidden"
-              id="audio-upload"
-            />
             
-            <label
-              htmlFor="audio-upload"
-              className={`block w-full p-4 border-2 border-dashed rounded-lg text-center cursor-pointer transition-all ${
-                isUploading || isTranscribing 
-                  ? 'border-purple-500/30 bg-purple-500/5 cursor-not-allowed' 
-                  : 'border-white/20 hover:border-purple-500/50 hover:bg-purple-500/10'
+            {/* Audio Level Visualization */}
+            <div className="mb-4">
+              <div className="flex items-center gap-1 h-12 justify-center">
+                {[...Array(20)].map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-1.5 rounded-full transition-all duration-75 ${
+                      isRecording && audioLevel * 20 > i 
+                        ? 'bg-gradient-to-t from-green-500 to-yellow-400' 
+                        : 'bg-white/10'
+                    }`}
+                    style={{ 
+                      height: `${Math.max(8, (isRecording ? (audioLevel * 100 * (1 + Math.sin(i * 0.5))) : 20))}%` 
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Record Button */}
+            <button
+              onClick={isRecording ? stopRecording : startRecording}
+              className={`w-full py-4 rounded-xl font-semibold text-lg transition-all flex items-center justify-center gap-3 ${
+                isRecording
+                  ? 'bg-red-500 hover:bg-red-600 text-white'
+                  : 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white'
               }`}
             >
-              {isUploading ? (
-                <div className="space-y-2">
-                  <svg className="animate-spin h-8 w-8 mx-auto text-purple-400" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              {isRecording ? (
+                <>
+                  <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                    <rect x="6" y="6" width="12" height="12" rx="2" />
                   </svg>
-                  <p className="text-purple-300 font-medium text-sm">Uploading...</p>
-                </div>
-              ) : isTranscribing ? (
-                <div className="space-y-2">
-                  <svg className="animate-pulse h-8 w-8 mx-auto text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                  </svg>
-                  <p className="text-green-300 font-medium text-sm">Transcribing...</p>
-                </div>
+                  Stop Recording
+                </>
               ) : (
-                <div className="space-y-2">
-                  <svg className="h-8 w-8 mx-auto text-white/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                <>
+                  <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                    <circle cx="12" cy="12" r="6" />
                   </svg>
-                  <p className="text-white/60 text-sm">Drop audio or click to browse</p>
-                </div>
+                  Start Recording
+                </>
               )}
-            </label>
+            </button>
 
-            {/* Progress */}
-            {(isTranscribing || transcriptionStatus) && (
-              <div className="mt-3 space-y-2">
-                <p className="text-xs text-purple-300">{transcriptionStatus}</p>
-                {isTranscribing && transcriptionProgress && transcriptionProgress.total > 0 && (
-                  <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
-                    <div 
-                      className="bg-gradient-to-r from-purple-500 to-pink-500 h-1.5 rounded-full transition-all duration-500"
-                      style={{ width: `${progressPercent}%` }}
-                    />
-                  </div>
-                )}
-                {isTranscribing && (
-                  <button
-                    onClick={stopTranscription}
-                    className="w-full px-3 py-1.5 bg-red-500/20 text-red-400 border border-red-500/30 rounded-lg text-xs font-medium hover:bg-red-500/30 transition flex items-center justify-center gap-1"
-                  >
-                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                    Stop
-                  </button>
-                )}
-              </div>
-            )}
-
-            {uploadError && (
-              <p className="mt-2 text-red-400 text-xs">{uploadError}</p>
-            )}
+            <p className="text-white/40 text-xs text-center mt-3">
+              {isRecording 
+                ? 'Recording... Speak clearly into your microphone'
+                : 'Click to start recording the conversation'}
+            </p>
           </div>
 
           {/* Lead Score Card */}
@@ -455,9 +508,6 @@ export default function CallScreen() {
                     </div>
                   </div>
                 ))}
-                {factors.length > 4 && (
-                  <p className="text-white/40 text-xs text-center">+{factors.length - 4} more insights</p>
-                )}
               </div>
             </div>
           )}
@@ -485,7 +535,7 @@ export default function CallScreen() {
         <div className="lg:col-span-2 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 flex flex-col overflow-hidden">
           <div className="flex items-center justify-between mb-3 pb-3 border-b border-white/10">
             <h2 className="text-white font-semibold text-sm flex items-center gap-2">
-              <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
               </svg>
               Live Transcript
@@ -506,11 +556,11 @@ export default function CallScreen() {
           <div className="flex-1 overflow-y-auto space-y-2 pr-2 min-h-0 scrollbar-thin">
             {messages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-white/40">
-                <svg className="w-12 h-12 mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-16 h-16 mb-3 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
                 </svg>
-                <p className="font-medium mb-1">No transcript yet</p>
-                <p className="text-sm text-white/30">Upload an audio file to begin</p>
+                <p className="font-medium mb-1">Ready to record</p>
+                <p className="text-sm text-white/30">Click "Start Recording" to begin live transcription</p>
               </div>
             ) : (
               messages.map((msg, idx) => (
@@ -523,7 +573,7 @@ export default function CallScreen() {
                   <div className={`px-3 py-2 rounded-xl ${
                     msg.speaker === "Agent"
                       ? "bg-slate-700/50 rounded-tl-sm"
-                      : "bg-gradient-to-r from-purple-600/70 to-pink-600/70 rounded-tr-sm"
+                      : "bg-gradient-to-r from-orange-600/70 to-red-600/70 rounded-tr-sm"
                   }`}>
                     <div className="flex items-center gap-2 mb-0.5">
                       <span className={`text-[10px] font-semibold uppercase tracking-wide ${
@@ -562,7 +612,6 @@ export default function CallScreen() {
         .animate-fadeIn {
           animation: fadeIn 0.3s ease-out;
         }
-        /* Custom scrollbar */
         .scrollbar-thin::-webkit-scrollbar {
           width: 4px;
         }
@@ -571,13 +620,12 @@ export default function CallScreen() {
           border-radius: 10px;
         }
         .scrollbar-thin::-webkit-scrollbar-thumb {
-          background: rgba(139, 92, 246, 0.3);
+          background: rgba(249, 115, 22, 0.3);
           border-radius: 10px;
         }
         .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-          background: rgba(139, 92, 246, 0.5);
+          background: rgba(249, 115, 22, 0.5);
         }
-        /* Line clamp */
         .line-clamp-2 {
           display: -webkit-box;
           -webkit-line-clamp: 2;

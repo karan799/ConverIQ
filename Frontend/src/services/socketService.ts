@@ -11,14 +11,39 @@ export interface Message {
 
 export interface PredictionUpdate {
   conversion_score: number;
-  factors: string[];
+  factors: Array<{
+    type: string;
+    label: string;
+    evidence?: string;
+    keywords?: string[];
+    count?: number;
+  }>;
   metrics?: {
     sentiment_score: number;
     buying_signal_score: number;
     engagement_score: number;
     response_quality: number;
+    decision_maker_score?: number;
+    high_value_score?: number;
   };
   timestamp: string;
+}
+
+export interface TranscriptionProgress {
+  call_id: string;
+  chunk: number;
+  total: number;
+  status: string;
+}
+
+export interface TranscriptionComplete {
+  call_id: string;
+  messages_count: number;
+}
+
+export interface TranscriptionError {
+  call_id: string;
+  error: string;
 }
 
 class SocketService {
@@ -103,6 +128,14 @@ class SocketService {
     });
   }
 
+  stopTranscription(callId: string) {
+    if (!this.socket) throw new Error('Socket not connected');
+
+    this.socket.emit('stop_transcription', {
+      call_id: callId,
+    });
+  }
+
   joinConversation(callId: string) {
     if (!this.socket) throw new Error('Socket not connected');
 
@@ -136,6 +169,26 @@ class SocketService {
     this.socket.on('error', callback);
   }
 
+  onTranscriptionProgress(callback: (data: TranscriptionProgress) => void) {
+    if (!this.socket) return;
+    this.socket.on('transcription_progress', callback);
+  }
+
+  onTranscriptionComplete(callback: (data: TranscriptionComplete) => void) {
+    if (!this.socket) return;
+    this.socket.on('transcription_complete', callback);
+  }
+
+  onTranscriptionError(callback: (data: TranscriptionError) => void) {
+    if (!this.socket) return;
+    this.socket.on('transcription_error', callback);
+  }
+
+  onTranscriptionStopped(callback: (data: { call_id: string; messages_count: number }) => void) {
+    if (!this.socket) return;
+    this.socket.on('transcription_stopped', callback);
+  }
+
   offAllListeners() {
     if (!this.socket) return;
     this.socket.off('conversation_started');
@@ -143,6 +196,9 @@ class SocketService {
     this.socket.off('prediction_update');
     this.socket.off('conversation_ended');
     this.socket.off('error');
+    this.socket.off('transcription_progress');
+    this.socket.off('transcription_complete');
+    this.socket.off('transcription_error');
   }
 
   isConnected(): boolean {
@@ -170,4 +226,4 @@ class SocketService {
 
 const socketService = new SocketService();
 export default socketService;
-export type { Message, PredictionUpdate };
+export type { Message, PredictionUpdate, TranscriptionProgress, TranscriptionComplete, TranscriptionError };

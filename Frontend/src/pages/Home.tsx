@@ -172,12 +172,20 @@ export default function Home() {
               <h2 className="text-base sm:text-lg font-semibold">
                 Top Prospects
               </h2>
-              <button
-                onClick={() => navigate("/new-call")}
-                className="bg-[#0F6CB6] text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-base hover:bg-[#0B4F8A] transition whitespace-nowrap w-full sm:w-auto"
-              >
-                + New Call
-              </button>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button
+                  onClick={() => navigate("/live-call")}
+                  className="bg-gradient-to-r from-red-500 to-orange-500 text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-base hover:from-red-600 hover:to-orange-600 transition whitespace-nowrap flex-1 sm:flex-none flex items-center justify-center gap-2"
+                >
+                  🎙️ Live Record
+                </button>
+                <button
+                  onClick={() => navigate("/new-call")}
+                  className="bg-[#0F6CB6] text-white px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-base hover:bg-[#0B4F8A] transition whitespace-nowrap flex-1 sm:flex-none"
+                >
+                  + New Call
+                </button>
+              </div>
             </div>
 
             {/* Table Header - Hidden on mobile */}

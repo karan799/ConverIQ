@@ -7,6 +7,7 @@ import whisper
 import torch
 import tempfile
 import os
+import subprocess
 import numpy as np
 from typing import List, Dict, Tuple
 import warnings
@@ -19,18 +20,64 @@ try:
     AUDIO_LIBS_AVAILABLE = True
 except ImportError:
     AUDIO_LIBS_AVAILABLE = False
-    print("Warning: librosa, soundfile, or noisereduce not available. Noise reduction disabled.")
 
 class AudioProcessor:
     def __init__(self):
         """Initialize audio processing models"""
-        print("Loading Whisper model for speech-to-text...")
-        # Use 'small' model for better accuracy (still fast enough)
-        self.whisper_model = whisper.load_model("medium")
-        if AUDIO_LIBS_AVAILABLE:
-            print("Audio processing engine initialized with noise reduction!")
-        else:
-            print("Audio processing engine initialized (noise reduction unavailable)!")
+        # Use 'tiny' model for fastest transcription (39MB) - prioritize speed over accuracy
+        self.whisper_model = whisper.load_model("base")  # base is more accurate, fewer hallucinations
+    
+    def _ffmpeg_extract_chunk(self, audio_path: str, start_time: float, duration: float, output_path: str) -> bool:
+        """Extract audio chunk using FFmpeg (much faster than librosa)"""
+        try:
+            cmd = [
+                'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+                '-ss', str(start_time),  # Seek position (before -i for fast seeking)
+                '-i', audio_path,
+                '-t', str(duration),
+                '-ar', '16000',  # 16kHz sample rate for Whisper
+                '-ac', '1',  # Mono
+                '-f', 'wav',
+                output_path
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+            return True
+        except Exception as e:
+            print(f"[DEBUG] FFmpeg error: {e}")
+            return False
+    
+    def _ffmpeg_get_duration(self, audio_path: str) -> float:
+        """Get audio duration using FFprobe (fast)"""
+        try:
+            cmd = [
+                'ffprobe', '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                audio_path
+            ]
+            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            return float(result.stdout.strip())
+        except Exception as e:
+            print(f"[DEBUG] FFprobe error: {e}")
+            return 0
+    
+    def convert_to_wav(self, input_path: str) -> str:
+        """Convert any audio format (webm, mp3, etc.) to WAV for Whisper"""
+        try:
+            output_path = input_path.rsplit('.', 1)[0] + '_converted.wav'
+            cmd = [
+                'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+                '-i', input_path,
+                '-ar', '16000',  # 16kHz for Whisper
+                '-ac', '1',      # Mono
+                '-f', 'wav',
+                output_path
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+            return output_path
+        except Exception as e:
+            print(f"[DEBUG] FFmpeg convert error: {e}")
+            return None
     
     def process_audio_file(self, audio_path: str) -> List[Dict[str, any]]:
         """
@@ -47,14 +94,11 @@ class AudioProcessor:
             # Step 1: Apply noise reduction if libraries available
             audio_to_transcribe = audio_path
             if AUDIO_LIBS_AVAILABLE:
-                print("Applying noise reduction...")
                 denoised_path = self._reduce_noise(audio_path)
                 if denoised_path:
                     audio_to_transcribe = denoised_path
-                    print("Noise reduction complete!")
             
             # Step 2: Transcribe audio using Whisper with optimized settings
-            print(f"Transcribing audio from: {audio_to_transcribe}")
             result = self.whisper_model.transcribe(
                 audio_to_transcribe,
                 language="en",
@@ -84,7 +128,6 @@ class AudioProcessor:
             return messages
             
         except Exception as e:
-            print(f"Error processing audio: {e}")
             raise e
         finally:
             # Clean up denoised file
@@ -94,88 +137,116 @@ class AudioProcessor:
                 except:
                     pass
     
-    def process_audio_file_streaming(self, audio_path: str, callback) -> None:
+    def process_audio_file_streaming(self, audio_path: str, callback, progress_callback=None, stop_check=None) -> None:
         """
         Process audio file with streaming output - transcribes in chunks and calls callback progressively
         
         Args:
             audio_path: Path to audio file
             callback: Function to call with each transcribed message dict
+            progress_callback: Optional function to call with progress updates (chunk_num, total_chunks, status)
+            stop_check: Optional function that returns True if processing should stop
         """
         denoised_path = None
         chunk_files = []
         
         try:
-            # Step 1: Apply noise reduction if libraries available
-            audio_to_transcribe = audio_path
-            if AUDIO_LIBS_AVAILABLE:
-                print("Applying noise reduction...")
-                denoised_path = self._reduce_noise(audio_path)
-                if denoised_path:
-                    audio_to_transcribe = denoised_path
-                    print("Noise reduction complete!")
+            # Get audio duration using FFprobe (very fast)
+            duration = self._ffmpeg_get_duration(audio_path)
+            chunk_duration = 5
             
-            # Step 2: Split audio into chunks for progressive processing
-            print(f"Splitting audio into chunks for streaming...")
-            chunk_files = self._split_audio_into_chunks(audio_to_transcribe, chunk_duration=15)
+            if duration > 0:
+                total_chunks = int(np.ceil(duration / chunk_duration))
+            else:
+                # Fallback - process as single file
+                total_chunks = 1
+                duration = 0
             
-            print(f"Processing {len(chunk_files)} chunks...")
+            print(f"[DEBUG] Audio duration: {duration}s, chunks: {total_chunks}")
+            
+            if progress_callback:
+                progress_callback(0, total_chunks, "Starting transcription...")
             
             # Track global state across chunks
             current_speaker = "Agent"  # First speaker is always agent
             last_speaker_change = 0
             global_segment_index = 0
+            last_end_time = 0  # Track end time across chunks
+            temp_dir = tempfile.gettempdir()
             
-            # Step 3: Process each chunk and stream results
-            for chunk_idx, chunk_path in enumerate(chunk_files):
-                print(f"Transcribing chunk {chunk_idx + 1}/{len(chunk_files)}...")
+            # Process each chunk on-demand (no pre-processing delay!)
+            for chunk_idx in range(total_chunks):
+                # Check if we should stop
+                if stop_check and stop_check():
+                    print("[DEBUG] Stop requested, halting transcription")
+                    break
                 
-                # Transcribe this chunk (optimized for speed)
+                if progress_callback:
+                    progress_callback(chunk_idx + 1, total_chunks, f"Transcribing segment {chunk_idx + 1}/{total_chunks}...")
+                
+                # Create chunk on-demand using FFmpeg (very fast!)
+                if duration > 0:
+                    start_time = chunk_idx * chunk_duration
+                    end_time = min((chunk_idx + 1) * chunk_duration, duration)
+                    chunk_duration_actual = end_time - start_time
+                    
+                    # Extract chunk using FFmpeg
+                    chunk_filename = f"chunk_{os.getpid()}_{chunk_idx}.wav"
+                    chunk_path = os.path.join(temp_dir, chunk_filename)
+                    
+                    if self._ffmpeg_extract_chunk(audio_path, start_time, chunk_duration_actual, chunk_path):
+                        chunk_files.append(chunk_path)
+                    else:
+                        # Fallback to original file if FFmpeg fails
+                        chunk_path = audio_path
+                else:
+                    chunk_path = audio_path
+                
+                # Transcribe this chunk immediately (optimized for speed)
                 result = self.whisper_model.transcribe(
                     chunk_path,
-                    # language="en",
                     task="transcribe",
                     verbose=False,
-                    word_timestamps=False,  # Faster without word timestamps
+                    word_timestamps=False,
                     temperature=0.0,
-                    best_of=1,  # Reduced from 5 for speed
-                    beam_size=3,  # Reduced from 5 for speed
-                    patience=0.5,  # Reduced for faster processing
+                    best_of=1,
+                    beam_size=1,  # Fastest beam search
+                    patience=0.0,
                     compression_ratio_threshold=2.4,
                     logprob_threshold=-1.0,
                     no_speech_threshold=0.6,
-                    condition_on_previous_text=True
+                    condition_on_previous_text=False  # Faster without context
                 )
                 
                 segments = result.get('segments', [])
+                print(f"[DEBUG] Found {len(segments)} segments in chunk {chunk_idx + 1}")
                 
                 # Process segments from this chunk
                 for i, segment in enumerate(segments):
                     text = segment.get('text', '').strip()
-                    start = segment.get('start', 0) + (chunk_idx * 15)  # Adjust timing for chunk offset (15s chunks)
-                    end = segment.get('end', 0) + (chunk_idx * 15)
+                    start = segment.get('start', 0) + (chunk_idx * chunk_duration)
+                    end = segment.get('end', 0) + (chunk_idx * chunk_duration)
                     
                     if not text:
                         continue
                     
                     # Detect speaker changes based on pauses
-                    if global_segment_index > 0 and i == 0:
-                        # First segment of new chunk - check if we should change speaker
-                        # Assume chunk boundaries might indicate speaker change
-                        if len(segments) > 0:
-                            # Only change speaker if there's content
-                            pass  # Keep same speaker for chunk continuity
-                    elif i > 0:
-                        prev_segment = segments[i-1]
-                        prev_end = prev_segment.get('end', 0)
-                        pause_duration = segment.get('start', 0) - prev_end
+                    pause_duration = 0
+                    if global_segment_index > 0:
+                        if i == 0:
+                            pause_duration = start - last_end_time
+                        else:
+                            prev_segment = segments[i-1]
+                            prev_end = prev_segment.get('end', 0) + (chunk_idx * chunk_duration)
+                            pause_duration = start - prev_end
                         
-                        # Use 1.5 second threshold for speaker change
-                        if pause_duration > 1.5 and (global_segment_index - last_speaker_change) >= 1:
+                        # Use 0.8 second threshold for speaker change
+                        if pause_duration > 0.8 and (global_segment_index - last_speaker_change) >= 1:
                             current_speaker = "Client" if current_speaker == "Agent" else "Agent"
                             last_speaker_change = global_segment_index
                     
-                    # Create message dict
+                    last_end_time = end
+                    
                     message = {
                         'speaker': current_speaker,
                         'text': text,
@@ -184,28 +255,29 @@ class AudioProcessor:
                         'duration': end - start
                     }
                     
-                    # Call the callback with this message (streaming output!)
                     callback(message)
-                    
-                    print(f"Streamed: {current_speaker}: {text[:50]}...")
                     global_segment_index += 1
+                
+                # Clean up this chunk immediately
+                if AUDIO_LIBS_AVAILABLE and chunk_path != audio_path:
+                    try:
+                        os.remove(chunk_path)
+                        chunk_files.remove(chunk_path)
+                    except:
+                        pass
+            
+            # Signal completion
+            if progress_callback:
+                progress_callback(total_chunks, total_chunks, "Transcription complete!")
             
         except Exception as e:
-            print(f"Error processing audio: {e}")
             raise e
         finally:
-            # Clean up chunk files
+            # Clean up any remaining chunk files
             for chunk_file in chunk_files:
                 try:
                     if os.path.exists(chunk_file):
                         os.remove(chunk_file)
-                except:
-                    pass
-            
-            # Clean up denoised file
-            if denoised_path and os.path.exists(denoised_path):
-                try:
-                    os.remove(denoised_path)
                 except:
                     pass
     
@@ -225,36 +297,37 @@ class AudioProcessor:
             return [audio_path]
         
         try:
-            # Load audio
-            audio, sr = librosa.load(audio_path, sr=16000)
+            # Get audio duration first without loading entire file
+            duration = librosa.get_duration(path=audio_path)
+            num_chunks = int(np.ceil(duration / chunk_duration))
             
-            # Calculate samples per chunk
-            samples_per_chunk = chunk_duration * sr
-            
-            # Split into chunks
             chunk_files = []
             temp_dir = tempfile.gettempdir()
+            sr = 16000  # Target sample rate
             
-            num_chunks = int(np.ceil(len(audio) / samples_per_chunk))
-            
+            # Stream-load and write chunks one at a time
             for i in range(num_chunks):
-                start_sample = i * samples_per_chunk
-                end_sample = min((i + 1) * samples_per_chunk, len(audio))
+                start_time = i * chunk_duration
+                end_time = min((i + 1) * chunk_duration, duration)
+                chunk_duration_actual = end_time - start_time
                 
-                chunk_audio = audio[start_sample:end_sample]
+                # Load only this chunk's audio segment
+                chunk_audio, _ = librosa.load(
+                    audio_path, 
+                    sr=sr, 
+                    offset=start_time, 
+                    duration=chunk_duration_actual
+                )
                 
                 # Save chunk
                 chunk_filename = f"chunk_{os.getpid()}_{i}.wav"
                 chunk_path = os.path.join(temp_dir, chunk_filename)
-                
                 sf.write(chunk_path, chunk_audio, sr)
                 chunk_files.append(chunk_path)
             
-            print(f"Split audio into {len(chunk_files)} chunks of {chunk_duration}s each")
             return chunk_files
             
         except Exception as e:
-            print(f"Error splitting audio: {e}. Using full file instead.")
             # Return original file as fallback
             return [audio_path]
     
@@ -328,7 +401,6 @@ class AudioProcessor:
         with open(temp_path, 'wb') as f:
             f.write(file_data)
         
-        print(f"Saved audio file to: {temp_path}")
         return temp_path
     
     def _reduce_noise(self, audio_path: str) -> str:
@@ -366,14 +438,10 @@ class AudioProcessor:
             temp_path = os.path.join(temp_dir, temp_filename)
             
             sf.write(temp_path, reduced_noise, sr)
-            print(f"Saved denoised audio to: {temp_path}")
             
             return temp_path
             
         except Exception as e:
-            print(f"Warning: Noise reduction failed: {e}")
-            import traceback
-            traceback.print_exc()
             return None
     
     def cleanup_temp_file(self, file_path: str):
@@ -381,8 +449,8 @@ class AudioProcessor:
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
-        except Exception as e:
-            print(f"Error cleaning up temp file: {e}")
+        except:
+            pass
 
 
 # For better speaker diarization (requires additional setup):
