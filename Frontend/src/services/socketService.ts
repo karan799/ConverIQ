@@ -72,17 +72,15 @@ class SocketService {
       });
 
       this.socket.on('connect', () => {
-        console.log('Connected to server');
         resolve();
       });
 
       this.socket.on('connect_error', (error) => {
-        console.error('Connection error:', error);
         reject(error);
       });
 
-      this.socket.on('connected', (data) => {
-        console.log('Server message:', data.message);
+      this.socket.on('connected', () => {
+        // Connected to server
       });
     });
   }

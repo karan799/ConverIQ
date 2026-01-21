@@ -1,8 +1,12 @@
-# import json
+"""
+ML Scoring Engine for ConverIQ
+Real-time sentiment analysis and lead conversion scoring
+Optimized for Indian Insurance Sales Conversations
+"""
+
 import numpy as np
 from transformers import pipeline
-# from datetime import datetime
-# import re
+
 
 class MLScoringEngine:
     """
@@ -324,8 +328,8 @@ class MLScoringEngine:
     
     
     
-    # this is for deciding if the client is the owner 
     def detect_decision_maker(self, text):
+        """Detect if the customer is a decision maker based on authority signals"""
         text_lower = text.lower()
         found = [p for p in self.decision_maker_signals if p in text_lower]
 

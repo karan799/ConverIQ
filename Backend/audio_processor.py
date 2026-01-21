@@ -1,15 +1,14 @@
 """
-Audio processing module for ConverIQ
-Handles audio upload, speaker diarization, and speech-to-text conversion
+Audio Processing Module for ConverIQ
+Handles audio transcription using Whisper and speaker diarization
 """
 
 import whisper
-import torch
 import tempfile
 import os
 import subprocess
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import List, Dict, Callable, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -42,8 +41,7 @@ class AudioProcessor:
             ]
             subprocess.run(cmd, check=True, capture_output=True)
             return True
-        except Exception as e:
-            print(f"[DEBUG] FFmpeg error: {e}")
+        except Exception:
             return False
     
     def _ffmpeg_get_duration(self, audio_path: str) -> float:
@@ -57,8 +55,7 @@ class AudioProcessor:
             ]
             result = subprocess.run(cmd, check=True, capture_output=True, text=True)
             return float(result.stdout.strip())
-        except Exception as e:
-            print(f"[DEBUG] FFprobe error: {e}")
+        except Exception:
             return 0
     
     def convert_to_wav(self, input_path: str) -> str:
@@ -75,8 +72,7 @@ class AudioProcessor:
             ]
             subprocess.run(cmd, check=True, capture_output=True)
             return output_path
-        except Exception as e:
-            print(f"[DEBUG] FFmpeg convert error: {e}")
+        except Exception:
             return None
     
     def process_audio_file(self, audio_path: str) -> List[Dict[str, any]]:
@@ -162,7 +158,6 @@ class AudioProcessor:
                 total_chunks = 1
                 duration = 0
             
-            print(f"[DEBUG] Audio duration: {duration}s, chunks: {total_chunks}")
             
             if progress_callback:
                 progress_callback(0, total_chunks, "Starting transcription...")
@@ -178,7 +173,6 @@ class AudioProcessor:
             for chunk_idx in range(total_chunks):
                 # Check if we should stop
                 if stop_check and stop_check():
-                    print("[DEBUG] Stop requested, halting transcription")
                     break
                 
                 if progress_callback:
@@ -219,7 +213,6 @@ class AudioProcessor:
                 )
                 
                 segments = result.get('segments', [])
-                print(f"[DEBUG] Found {len(segments)} segments in chunk {chunk_idx + 1}")
                 
                 # Process segments from this chunk
                 for i, segment in enumerate(segments):
@@ -451,39 +444,3 @@ class AudioProcessor:
                 os.remove(file_path)
         except:
             pass
-
-
-# For better speaker diarization (requires additional setup):
-"""
-To use pyannote.audio for better speaker diarization:
-
-1. Install: pip install pyannote.audio
-
-2. Get Hugging Face token from https://huggingface.co/settings/tokens
-
-3. Accept user agreement for pyannote models:
-   - https://huggingface.co/pyannote/speaker-diarization
-   - https://huggingface.co/pyannote/segmentation
-
-4. Use this code:
-
-from pyannote.audio import Pipeline
-
-class AudioProcessorAdvanced:
-    def __init__(self, hf_token: str):
-        self.whisper_model = whisper.load_model("base")
-        self.diarization = Pipeline.from_pretrained(
-            "pyannote/speaker-diarization",
-            use_auth_token=hf_token
-        )
-    
-    def advanced_diarization(self, audio_path: str):
-        # Run diarization
-        diarization = self.diarization(audio_path)
-        
-        # Run transcription
-        transcription = self.whisper_model.transcribe(audio_path)
-        
-        # Align transcription with diarization
-        # ... alignment logic ...
-"""

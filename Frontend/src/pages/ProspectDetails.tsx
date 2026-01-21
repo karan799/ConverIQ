@@ -75,7 +75,7 @@ export default function ProspectDetails() {
             </div>
             <div className="hidden sm:block">
               <div className="text-sm sm:text-lg font-semibold text-[#0F6CB6]">
-                Care Lead
+                ConverIQ
               </div>
               <div className="text-xs text-[#6B7280]">
                 Prospect Intelligence

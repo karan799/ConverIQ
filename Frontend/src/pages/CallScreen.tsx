@@ -60,12 +60,11 @@ export default function CallScreen() {
         });
 
         socketService.onError((data) => {
-          console.error('Socket error:', data.message);
           setUploadError(data.message);
         });
 
-        socketService.onConversationStarted((data) => {
-          console.log('Conversation started:', data);
+        socketService.onConversationStarted(() => {
+          // Conversation started
         });
 
         socketService.onTranscriptionProgress((data) => {
@@ -94,8 +93,7 @@ export default function CallScreen() {
           setTimeout(() => setTranscriptionStatus(''), 5000);
         });
 
-      } catch (error) {
-        console.error('Failed to connect:', error);
+      } catch {
         setUploadError('Failed to connect to server. Please ensure the backend is running.');
       }
     };

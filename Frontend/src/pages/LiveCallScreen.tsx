@@ -58,12 +58,12 @@ export default function LiveCallScreen() {
           setMetrics(data.metrics || {});
         });
 
-        socketService.onError((data) => {
-          console.error('Socket error:', data.message);
+        socketService.onError(() => {
+          // Handle socket error
         });
 
-      } catch (error) {
-        console.error('Failed to connect:', error);
+      } catch {
+        // Connection failed
       }
     };
 
@@ -136,7 +136,6 @@ export default function LiveCallScreen() {
           mimeType = 'audio/mp4';
         }
       }
-      console.log('Using mimeType:', mimeType);
 
       // Setup MediaRecorder
       const mediaRecorder = new MediaRecorder(stream, { mimeType });
@@ -146,7 +145,6 @@ export default function LiveCallScreen() {
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        console.log('Audio data available:', event.data.size, 'bytes');
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
@@ -159,35 +157,28 @@ export default function LiveCallScreen() {
 
       // Send audio chunks every 5 seconds
       const sendChunks = () => {
-        console.log('Interval check - chunks:', audioChunksRef.current.length, 'recording:', isRecordingRef.current);
         if (audioChunksRef.current.length > 0 && isRecordingRef.current) {
-          const chunks = [...audioChunksRef.current]; // Copy array
-          audioChunksRef.current = []; // Clear the array
+          const chunks = [...audioChunksRef.current];
+          audioChunksRef.current = [];
           
           const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-          console.log('Sending audio chunk:', audioBlob.size, 'bytes');
-          
-          // Send to backend (non-blocking)
-          sendAudioChunk(audioBlob).catch(err => {
-            console.error('Failed to send chunk:', err);
+          sendAudioChunk(audioBlob).catch(() => {
+            // Failed to send chunk
           });
         }
       };
       
       chunkIntervalRef.current = setInterval(sendChunks, 5000);
 
-      mediaRecorder.start(1000); // Collect data every second
-      console.log('MediaRecorder started');
+      mediaRecorder.start(1000);
       updateAudioLevel();
 
-    } catch (error) {
-      console.error('Failed to start recording:', error);
+    } catch {
       alert('Could not access microphone. Please allow microphone permissions.');
     }
   };
 
   const stopRecording = () => {
-    console.log('Stopping recording...');
     isRecordingRef.current = false;
     
     if (chunkIntervalRef.current) {
@@ -211,25 +202,17 @@ export default function LiveCallScreen() {
 
   const sendAudioChunk = async (audioBlob: Blob) => {
     try {
-      console.log('Preparing to send chunk, size:', audioBlob.size);
       const formData = new FormData();
       formData.append('audio', audioBlob, 'chunk.webm');
       formData.append('call_id', callId);
       formData.append('is_live', 'true');
 
-      const response = await fetch('http://localhost:5000/api/upload_live_audio', {
+      await fetch('http://localhost:5000/api/upload_live_audio', {
         method: 'POST',
         body: formData,
       });
-
-      const result = await response.json();
-      console.log('Server response:', result);
-
-      if (!response.ok) {
-        console.error('Failed to send audio chunk:', result);
-      }
-    } catch (error) {
-      console.error('Error sending audio chunk:', error);
+    } catch {
+      // Error sending audio chunk
     }
   };
 
