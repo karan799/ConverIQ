@@ -480,4 +480,5 @@ if __name__ == '__main__':
     get_audio_processor()
     print(f'\n  Server running on http://localhost:{port}')
     print('  Ready for connections.\n')
-    socketio.run(app, host='0.0.0.0', port=port, debug=False)
+    # Allow unsafe werkzeug for Hugging Face Spaces / Docker deployment
+    socketio.run(app, host='0.0.0.0', port=port, debug=False, allow_unsafe_werkzeug=True)
