@@ -28,14 +28,11 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'converiq-secret-key')
 
 # CORS configuration
-allowed_origins = [
-    "http://localhost:5173", 
-    "http://127.0.0.1:5173", 
-    "http://localhost:5174", 
-    "http://127.0.0.1:5174"
-]
-CORS(app, resources={r"/*": {"origins": allowed_origins}})
-socketio = SocketIO(app, cors_allowed_origins=allowed_origins, async_mode='threading')
+# CORS configuration
+# Allow all origins for production/demo simplicity, or configure specific domains via env
+allowed_origins = ["*"]
+CORS(app, resources={r"/*": {"origins": "*"}})
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Singleton instances
 ml_engine = None
