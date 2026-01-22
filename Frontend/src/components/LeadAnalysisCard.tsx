@@ -10,7 +10,7 @@ import {
 } from 'recharts';
 import { ChevronDown, ChevronUp, Info } from 'lucide-react';
 
-export default function LeadAnalysisCard({ score, metrics, factors, messages }: { score: number, metrics: any, factors: any[], messages: any[] }) {
+export default function LeadAnalysisCard({ score, metrics, factors }: { score: number, metrics: any, factors: any[] }) {
     const [isExpanded, setIsExpanded] = useState(false);
 
     // Normalize metrics for Radar Chart (scale to 100)
@@ -59,6 +59,67 @@ export default function LeadAnalysisCard({ score, metrics, factors, messages }: 
             <div className={`overflow-hidden transition-all duration-500 ease-in-out ${isExpanded ? 'max-h-[800px] opacity-100' : 'max-h-0 opacity-0'}`}>
                 <div className="p-4 pt-0 space-y-4">
 
+                    {/* Score Explanation */}
+                    <div className="bg-white/5 rounded-lg p-3 space-y-4">
+                        <div className="space-y-2">
+                            <h4 className="text-sm font-semibold text-white/70 flex items-center gap-1">
+                                <Info className="w-4 h-4" /> Score Breakdown
+                            </h4>
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-white/40">Sentiment (30pts)</span>
+                                    <span className="text-white/80">{(metrics.sentiment_score || 0).toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-white/40">Buying Intent (35pts)</span>
+                                    <span className="text-white/80">{(metrics.buying_signal_score || 0).toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-white/40">Engagement (20pts)</span>
+                                    <span className="text-white/80">{(metrics.engagement_score || 0).toFixed(1)}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-white/40">Quality (15pts)</span>
+                                    <span className="text-white/80">{(metrics.response_quality || 0).toFixed(1)}</span>
+                                </div>
+                                <div className="pt-2 mt-2 border-t border-white/10 text-xs text-white/40 italic">
+                                    * Scores are calculated relative to industry benchmarks.
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Definitions */}
+                        <div className="space-y-3 border-t border-white/10 pt-3">
+                            <h5 className="text-xs font-semibold text-white/60">Metric Definitions</h5>
+                            <div className="grid gap-3">
+                                <div>
+                                    <p className="text-xs text-pink-300 font-medium">Sentiment</p>
+                                    <p className="text-xs text-white/50 leading-relaxed">
+                                        Analyzes emotional tone (positive/negative) of customer messages using NLP. Higher score indicates positive reception.
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-green-300 font-medium">Buying Intent</p>
+                                    <p className="text-xs text-white/50 leading-relaxed">
+                                        Detects purchase signals, urgency keywords, and financial intent markers. Penalized by objections.
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-blue-300 font-medium">Engagement</p>
+                                    <p className="text-xs text-white/50 leading-relaxed">
+                                        Measures interaction frequency, response length, and conversation depth.
+                                    </p>
+                                </div>
+                                <div>
+                                    <p className="text-xs text-purple-300 font-medium">Quality</p>
+                                    <p className="text-xs text-white/50 leading-relaxed">
+                                        Evaluates questions asked by customer, decision-maker authority participation, and overall dialogue quality.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Radar Chart */}
                     <div className="h-48 w-full relative -ml-4">
                         <ResponsiveContainer width="100%" height="100%">
@@ -76,34 +137,6 @@ export default function LeadAnalysisCard({ score, metrics, factors, messages }: 
                                 />
                             </RadarChart>
                         </ResponsiveContainer>
-                    </div>
-
-                    {/* Score Explanation */}
-                    <div className="bg-white/5 rounded-lg p-3 space-y-2">
-                        <h4 className="text-xs font-semibold text-white/70 flex items-center gap-1">
-                            <Info className="w-3 h-3" /> Score Breakdown
-                        </h4>
-                        <div className="space-y-1">
-                            <div className="flex justify-between text-xs">
-                                <span className="text-white/40">Sentiment (30pts)</span>
-                                <span className="text-white/80">{(metrics.sentiment_score || 0).toFixed(1)}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-white/40">Buying Intent (35pts)</span>
-                                <span className="text-white/80">{(metrics.buying_signal_score || 0).toFixed(1)}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-white/40">Engagement (20pts)</span>
-                                <span className="text-white/80">{(metrics.engagement_score || 0).toFixed(1)}</span>
-                            </div>
-                            <div className="flex justify-between text-xs">
-                                <span className="text-white/40">Quality (15pts)</span>
-                                <span className="text-white/80">{(metrics.response_quality || 0).toFixed(1)}</span>
-                            </div>
-                            <div className="pt-2 mt-2 border-t border-white/10 text-[10px] text-white/40 italic">
-                                * Scores are calculated relative to industry benchmarks.
-                            </div>
-                        </div>
                     </div>
 
                     {/* AI Insights Trail */}

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import socketService from "../services/socketService";
 import type { Message, PredictionUpdate, TranscriptionProgress } from "../services/socketService";
@@ -23,6 +23,46 @@ export default function CallScreen() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasInitialized = useRef(false);
+
+  const [splitPosition, setSplitPosition] = useState(50);
+  const [isResizing, setIsResizing] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Resize logic
+  const startResizing = useCallback(() => {
+    setIsResizing(true);
+  }, []);
+
+  const stopResizing = useCallback(() => {
+    setIsResizing(false);
+  }, []);
+
+  const resize = useCallback(
+    (e: MouseEvent) => {
+      if (isResizing && containerRef.current) {
+        const containerRect = containerRef.current.getBoundingClientRect();
+        // Calculate new percentage based on mouse position relative to container
+        let newPercent = ((e.clientX - containerRect.left) / containerRect.width) * 100;
+
+        // Clamp between 20% and 80% to prevent completely hiding panels
+        newPercent = Math.max(20, Math.min(80, newPercent));
+
+        setSplitPosition(newPercent);
+      }
+    },
+    [isResizing]
+  );
+
+  useEffect(() => {
+    if (isResizing) {
+      window.addEventListener("mousemove", resize);
+      window.addEventListener("mouseup", stopResizing);
+    }
+    return () => {
+      window.removeEventListener("mousemove", resize);
+      window.removeEventListener("mouseup", stopResizing);
+    };
+  }, [isResizing, resize, stopResizing]);
 
   // Auto-scroll to bottom when new messages arrive
   const scrollToBottom = () => {
@@ -164,6 +204,11 @@ export default function CallScreen() {
     }
   };
 
+  // Handle Drag & Drop for file upload (prevent default everywhere in container)
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
   const stopTranscription = () => {
     socketService.stopTranscription(callId || '');
     setIsTranscribing(false);
@@ -185,9 +230,9 @@ export default function CallScreen() {
     : 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex flex-col">
       {/* Header */}
-      <nav className="bg-black/30 backdrop-blur-sm border-b border-white/10">
+      <nav className="bg-black/30 backdrop-blur-sm border-b border-white/10 flex-shrink-0">
         <div className="px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-white font-bold">
@@ -207,14 +252,21 @@ export default function CallScreen() {
         </div>
       </nav>
 
-      <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4 h-[calc(100vh-72px)] overflow-hidden">
+      <div
+        ref={containerRef}
+        className="flex-1 p-4 flex flex-col lg:flex-row gap-0 overflow-hidden relative"
+        onMouseUp={stopResizing}
+      >
         {/* Left Sidebar - Analytics */}
-        <div className="lg:col-span-1 overflow-y-auto space-y-3 pr-2 scrollbar-thin">
+        <div
+          className="overflow-y-auto pr-2 scrollbar-thin lg:h-full flex-shrink-0 flex flex-col gap-3"
+          style={{ width: `${splitPosition}%` }}
+        >
           {/* Upload Card */}
           <div
             className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4"
             onDrop={handleDrop}
-            onDragOver={(e) => e.preventDefault()}
+            onDragOver={handleDragOver}
           >
             <h2 className="text-white font-semibold text-sm mb-3 flex items-center gap-2">
               <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -301,13 +353,19 @@ export default function CallScreen() {
             score={score}
             metrics={metrics}
             factors={factors}
-            messages={messages}
           />
+        </div>
 
+        {/* Resizer Handle */}
+        <div
+          className="w-4 flex items-center justify-center cursor-col-resize hover:bg-white/5 transition-colors group z-50 flex-shrink-0"
+          onMouseDown={startResizing}
+        >
+          <div className={`w-0.5 h-full rounded-full transition-colors ${isResizing ? 'bg-purple-500' : 'bg-white/10 group-hover:bg-purple-400/50'}`} />
         </div>
 
         {/* Transcript Section */}
-        <div className="lg:col-span-2 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 flex flex-col overflow-hidden">
+        <div className="flex-1 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl p-4 flex flex-col overflow-hidden h-full min-w-0">
           <div className="flex items-center justify-between mb-3 pb-3 border-b border-white/10">
             <h2 className="text-white font-semibold text-sm flex items-center gap-2">
               <svg className="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -374,7 +432,6 @@ export default function CallScreen() {
           </div>
         </div>
       </div>
-
       <style>{`
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(10px); }

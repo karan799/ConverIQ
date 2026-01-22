@@ -399,35 +399,50 @@ class MLScoringEngine:
         avg_sentiment = np.mean(customer_sentiments) if customer_sentiments else 0.5
         sentiment_score = avg_sentiment * 30
         
-        # 2. Buying Signals (40% weight) - Enhanced for Indian Insurance
+        # 2. Buying Signals (45% weight) - Enhanced for Indian Insurance with Weighted Scoring
         all_customer_text = ' '.join([m.get('text', '') for m in customer_messages])
         signals = self.extract_buying_signals(all_customer_text)
         
-        positive_score = min(len(set(signals['positive_keywords'])) * 3, 20)
-        negative_penalty = min(len(set(signals['negative_keywords'])) * 4, 15)  # Higher penalty for objections
-        urgency_score = min(len(set(signals['urgency_keywords'])) * 8, 12)
-        high_value_score = min(len(set(signals['high_value_keywords'])) * 5, 10)  # Bonus for high-value signals
+        # Weighted signal scoring
+        # Direct "I want to buy" signals are worth more than general "tell me more"
+        strong_positive_count = sum(1 for kw in signals['positive_keywords'] 
+                                  if any(strong in kw for strong in ["buy", "purchase", "policy le", "payment", "cheque", "account"]))
+        normal_positive_count = signals['positive_signals'] - strong_positive_count
         
-        buying_signal_score = max(0, positive_score + urgency_score + high_value_score - negative_penalty)
+        positive_score = min((strong_positive_count * 5) + (normal_positive_count * 2), 25)
         
-        # 3. Engagement Level (20% weight)
+        # Objections are penalized heavily but can be recovered
+        # If sentiment is positive despite objections (e.g., "Price is high but I like it"), penalty is reduced
+        base_negative_penalty = min(len(set(signals['negative_keywords'])) * 5, 20)
+        sentiment_mitigation = 0.5 if avg_sentiment > 0.6 else 1.0
+        negative_penalty = base_negative_penalty * sentiment_mitigation
+        
+        urgency_score = min(len(set(signals['urgency_keywords'])) * 6, 10)
+        high_value_score = min(len(set(signals['high_value_keywords'])) * 4, 10)
+        
+        # Sentiment Multiplier: High sentiment boosts buying signal impact
+        sentiment_multiplier = 1.2 if avg_sentiment > 0.7 else (0.8 if avg_sentiment < 0.3 else 1.0)
+        
+        raw_buying_score = (positive_score + urgency_score + high_value_score) * sentiment_multiplier
+        buying_signal_score = max(0, raw_buying_score - negative_penalty)
+        
+        # 3. Engagement Level (15% weight)
         meaningful_msgs = [m for m in customer_messages if len(m.get('text', '')) > 10]
-        message_count_score = min(len(meaningful_msgs) * 3, 20)
+        # Quality over quantity
+        avg_msg_len = np.mean([len(m.get('text', '')) for m in customer_messages]) if customer_messages else 0
+        engagement_quality = min(avg_msg_len / 50, 1.0) # Cap at 1.0 for messages ~50 chars long
+        
+        message_count_score = min(len(meaningful_msgs) * 2, 10) + (engagement_quality * 5)
 
         
-        # 4. Response Quality (15% weight)
-        avg_customer_msg_length = np.mean([len(m.get('text', '')) for m in customer_messages])
-        avg_len = min(avg_customer_msg_length, 200)
-        response_quality = (avg_len / 200) * 15
+        # 4. Response Quality (10% weight)
+        # Check for question/inquiry patterns (customers asking questions is good)
+        question_count = sum(1 for m in customer_messages if '?' in m.get('text', '') or any(q in m.get('text', '').lower() for q in ['kya', 'kaise', 'kab', 'how', 'what', 'when']))
+        response_quality = min(question_count * 2, 10)
 
-        # 2.5 Decision Maker Boost
-
+        # 2.5 Decision Maker Boost (Can add up to 10 points)
         decision_data = self.detect_decision_maker(all_customer_text)
-
-        decision_score = min(
-            len(set(decision_data["keywords"])) * 4,
-            12
-        )
+        decision_score = min(len(set(decision_data["keywords"])) * 5, 10)
 
         
         # Calculate total score (0-100)

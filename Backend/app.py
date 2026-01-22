@@ -249,6 +249,8 @@ def upload_live_audio():
                     temperature=0.0,
                     beam_size=1,
                     best_of=1,
+                    language="en",
+                    initial_prompt="Namaste. Mera naam Himanshu hai. Transcribe Hindi words phonetically in English. Do not translate."
                 )
                 
                 segments = result.get('segments', [])
@@ -269,9 +271,14 @@ def upload_live_audio():
                 for segment in segments:
                     text = segment.get('text', '').strip()
                     
-                    if not text or len(text) < 5:
+                    if not text or len(text) < 3:
                         continue
                     if text.lower() in hallucinations:
+                        continue
+                    
+                    # Arabic/Non-Latin filter
+                    ascii_chars = sum(1 for c in text if ord(c) < 128)
+                    if len(text) > 0 and (ascii_chars / len(text)) < 0.5:
                         continue
                     
                     is_hallucination = False
@@ -281,6 +288,8 @@ def upload_live_audio():
                             break
                     if is_hallucination:
                         continue
+                     
+                    # If valid...
                     
                     speaker = "Client"
                     conversation_history = conversations_db.get(call_id, {}).get('messages', [])
@@ -469,6 +478,8 @@ if __name__ == '__main__':
     print('=' * 50)
     print('\n  Initializing ML models...')
     get_ml_engine()
+    print('\n  Initializing Audio Processor...')
+    get_audio_processor()
     print(f'\n  Server running on http://localhost:{port}')
     print('  Ready for connections.\n')
     socketio.run(app, host='0.0.0.0', port=port, debug=False)

@@ -138,7 +138,7 @@ class AudioProcessor:
             # Step 2: Transcribe audio using Whisper with optimized settings
             result = self.whisper_model.transcribe(
                 audio_to_transcribe,
-                # language="en",
+                language="en",
                 task="transcribe",
                 verbose=False,
                 word_timestamps=True,
@@ -150,7 +150,8 @@ class AudioProcessor:
                 compression_ratio_threshold=2.4,  # Filter out poor quality segments
                 logprob_threshold=-1.0,  # Filter low confidence segments
                 no_speech_threshold=0.6,  # Better silence detection
-                condition_on_previous_text=True  # Use context from previous segments
+                condition_on_previous_text=True,  # Use context from previous segments
+                initial_prompt="Namaste. Mera naam Himanshu hai. Transcribe Hindi words phonetically in English. Do not translate."
             )
             
             # Step 3: Extract segments with timestamps
@@ -229,17 +230,48 @@ class AudioProcessor:
             kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
             labels = kmeans.fit_predict(X_scaled)
             
-            # map cluster IDs to speaker names
-            # Logic: The first valid segment MUST be 'Agent' (as requested)
-            first_label = labels[0]
+            # --- Text-Based Role Correction (Batch) ---
+            agent_keywords = {"help", "sir", "mam", "ma'am", "madam", "policy", "insurance", "coverage", "plan", "offer", "company", "speak with"}
+            client_keywords = {"need", "want", "buy", "looking for", "urgency", "urgent", "tomorrow", "today", "visa", "interview", "am i speaking"}
             
-            # If first_label is 0, then 0->Agent, 1->Client
-            # If first_label is 1, then 1->Agent, 0->Client
-            speaker_map = {
-                first_label: "Agent",
-                1 - first_label: "Client"
-            }
+            c0_score = 0
+            c1_score = 0
             
+            # Map labels to text indices
+            label_cursor = 0
+            
+            for i, seg in enumerate(segments):
+                if i in valid_indices:
+                    lbl = labels[label_cursor]
+                    txt = seg['text'].lower()
+                    
+                    for word in agent_keywords:
+                        if word in txt:
+                            if lbl == 0: c0_score += 1
+                            else: c1_score += 1
+                    for word in client_keywords:
+                        if word in txt:
+                            if lbl == 0: c0_score -= 1
+                            else: c1_score -= 1
+                    
+                    label_cursor += 1
+                    
+            # Determine mapping
+            speaker_map = {}
+            if abs(c0_score - c1_score) >= 1:
+                # We have a confidence text signal
+                if c0_score > c1_score:
+                    speaker_map = {0: "Agent", 1: "Client"}
+                else:
+                    speaker_map = {0: "Client", 1: "Agent"}
+            else:
+                # Fallback to First Segment = Agent
+                first_label = labels[0]
+                speaker_map = {
+                    first_label: "Agent",
+                    1 - first_label: "Client"
+                }
+
             messages = []
             label_idx = 0
             
@@ -276,7 +308,7 @@ class AudioProcessor:
         try:
             # Get audio duration
             duration = self._ffmpeg_get_duration(audio_path)
-            chunk_duration = 15  # Process in 15s chunks for balance of latency and context
+            chunk_duration = 4  # Process in 4s chunks for near real-time latency
             
             if duration > 0:
                 total_chunks = int(np.ceil(duration / chunk_duration))
@@ -317,14 +349,53 @@ class AudioProcessor:
                 else:
                     chunk_path = audio_path
 
-                # 2. Transcribe Chunk
-                result = self.whisper_model.transcribe(
-                    chunk_path,
-                    task="transcribe",
-                    verbose=False,
-                    word_timestamps=False
-                )
-                segments = result.get('segments', [])
+                # Check for silence/low energy to skip processing
+                is_silent = False
+                try:
+                    if AUDIO_LIBS_AVAILABLE and os.path.exists(chunk_path):
+                        y_chunk, _ = librosa.load(chunk_path, sr=16000)
+                        rms = np.sqrt(np.mean(y_chunk**2))
+                        if rms < 0.005:  # Silence threshold
+                            is_silent = True
+                except:
+                    pass
+
+                segments = []
+                if not is_silent:
+                    # 2. Transcribe Chunk
+                    # Use language="en" to force Latin script, prompt to prevent translation
+                    result = self.whisper_model.transcribe(
+                        chunk_path,
+                        task="transcribe",
+                        language="en",
+                        verbose=False,
+                        word_timestamps=False,
+                        initial_prompt="Namaste. Mera naam Himanshu hai. Transcribe Hindi words phonetically in English. Do not translate."
+                    )
+                    raw_segments = result.get('segments', [])
+                    
+                    # 2.5 Filter Hallucinations
+                    hallucinations = [
+                        "thanks for watching", "thank you for watching", "subscribe",
+                        "like and subscribe", "see you next time", "bye bye",
+                        "thank you", "thanks", "you", "the end", "...",
+                        "music", "[music]", "(music)", "applause", "[applause]",
+                    ]
+                    
+                    for seg in raw_segments:
+                        txt = seg.get('text', '').strip()
+                        if not txt or len(txt) < 3:
+                            continue
+                        if txt.lower() in hallucinations:
+                            continue
+                            
+                        # Arabic/Non-Latin filter (simple check)
+                        # If more than 50% characters are not ASCII, skip
+                        ascii_chars = sum(1 for c in txt if ord(c) < 128)
+                        if len(txt) > 0 and (ascii_chars / len(txt)) < 0.5:
+                            continue
+                            
+                        segments.append(seg)
                 
                 # 3. Process Segments and Cluster
                 new_features = []
@@ -332,17 +403,25 @@ class AudioProcessor:
                 
                 # Extract features for new segments
                 for i, seg in enumerate(segments):
+                    # Save relative times for feature extraction from chunk
+                    rel_start = seg['start']
+                    rel_end = seg['end']
+                    
                     # Adjust times to global time
                     seg['start'] += (chunk_idx * chunk_duration)
                     seg['end'] += (chunk_idx * chunk_duration)
                     
-                    # For feature extraction, we need to access the Audio from the specific time.
-                    # We can use the chunk_path or the original file.
-                    # Ideally use original file with global timestamps, but chunk_path is faster for IO?
-                    # Actually _extract_segment_embedding uses librosa.load with offset.
-                    # It's better to use audio_path with global offset to be consistent.
+                    # For feature extraction, use the chunk if available to avoid re-reading heavy file
+                    target_file = chunk_path
+                    target_start = rel_start
+                    target_end = rel_end
                     
-                    feat = self._extract_segment_embedding(audio_path, seg['start'], seg['end'])
+                    if chunk_path == audio_path:
+                        # Fallback case: chunk extraction failed or single file
+                        target_start = seg['start']
+                        target_end = seg['end']
+                    
+                    feat = self._extract_segment_embedding(target_file, target_start, target_end)
                     if feat is not None:
                         new_features.append(feat)
                         valid_segment_indices.append(i)
@@ -353,12 +432,62 @@ class AudioProcessor:
                 
                 # Perform Clustering (if we have enough data)
                 labels = []
+                speaker_map_override = None # Correction map based on text
+                
                 if SKLEARN_AVAILABLE and len(global_features) >= 2:
                     try:
                         scaler = StandardScaler()
                         X_scaled = scaler.fit_transform(global_features)
                         kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
                         labels = kmeans.fit_predict(X_scaled)
+                        
+                        # --- Text-Based Role Correction ---
+                        # Analyze all segments processed so far to see if Cluster 0 or Cluster 1 uses "Agent" words
+                        # This runs every chunk, refining the assignment as more text comes in.
+                        
+                        cluster_0_text = []
+                        cluster_1_text = []
+                        feature_cursor = 0
+                        
+                        # Re-iterate past segments (not efficient for HUGE files, but fine for calls)
+                        # We need to map global features back to text. 
+                        # Simplified approach: Use current chunk's text to vote
+                        # Better approach: Maintain global text list aligned with features? Too complex for now.
+                        # Hybrid: Use valid_segment_indices of THIS chunk to check keywords
+                        
+                        c0_score = 0
+                        c1_score = 0
+                        
+                        # Keywords
+                        agent_keywords = {"help", "sir", "mam", "ma'am", "madam", "policy", "insurance", "coverage", "plan", "offer", "company", "speak with"}
+                        client_keywords = {"need", "want", "buy", "looking for", "urgency", "urgent", "tomorrow", "today", "visa", "interview"}
+                        
+                        # Check words in current chunk segments
+                        current_chunk_labels = labels[start_feature_idx:start_feature_idx+len(new_features)]
+                        
+                        for idx_in_chunk, seg_idx in enumerate(valid_segment_indices):
+                            if idx_in_chunk < len(current_chunk_labels):
+                                lbl = current_chunk_labels[idx_in_chunk]
+                                txt = segments[seg_idx]['text'].lower()
+                                
+                                # Simple voting
+                                for word in agent_keywords:
+                                    if word in txt:
+                                        if lbl == 0: c0_score += 1 
+                                        else: c1_score += 1
+                                for word in client_keywords:
+                                    if word in txt:
+                                        if lbl == 0: c0_score -= 1 # Evidence AGAINST being agent
+                                        else: c1_score -= 1
+                        
+                        # Decide mapping (only if strong signal)
+                        # Higher score = More likely Agent
+                        if abs(c0_score - c1_score) >= 1:
+                            if c0_score > c1_score:
+                                speaker_map_override = {0: "Agent", 1: "Client"}
+                            else:
+                                speaker_map_override = {0: "Client", 1: "Agent"}
+                                
                     except Exception as e:
                         print(f"Incremental clustering failed: {e}")
                         labels = []
@@ -373,16 +502,17 @@ class AudioProcessor:
                         if len(labels) == len(global_features):
                             # We have valid clustering
                             current_label = labels[start_feature_idx + feature_idx_in_chunk]
-                            first_label = labels[0] # Anchor to first segment ever
                             
-                            # Logic: First segment (index 0) is ALWAYS "Agent" (or configured env)
-                            # If current_label == first_label -> Agent
-                            # else -> Client
-                            
-                            if current_label == first_label:
-                                speaker = initial_speaker_env
+                            if speaker_map_override:
+                                # Use text-corrected mapping
+                                speaker = speaker_map_override.get(current_label, "Agent")
                             else:
-                                speaker = "Client" if initial_speaker_env == "Agent" else "Agent"
+                                # Fallback to First Segment = Agent logic
+                                first_label = labels[0] 
+                                if current_label == first_label:
+                                    speaker = initial_speaker_env
+                                else:
+                                    speaker = "Client" if initial_speaker_env == "Agent" else "Agent"
                             
                         feature_idx_in_chunk += 1
                     

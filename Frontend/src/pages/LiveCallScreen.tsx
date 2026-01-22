@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import socketService from "../services/socketService";
 import type { Message, PredictionUpdate } from "../services/socketService";
+import { AreaChart, Area, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 
 export default function LiveCallScreen() {
   const navigate = useNavigate();
@@ -12,6 +13,9 @@ export default function LiveCallScreen() {
   const [score, setScore] = useState(0);
   const [factors, setFactors] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<any>({});
+  // History for graph
+  const [sentimentHistory, setSentimentHistory] = useState<any[]>([]);
+
   const [isConnected, setIsConnected] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -21,8 +25,8 @@ export default function LiveCallScreen() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const chunkIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const recordingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const chunkIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hasInitialized = useRef(false);
   const isRecordingRef = useRef(false);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -56,6 +60,19 @@ export default function LiveCallScreen() {
           setScore(data.conversion_score);
           setFactors(data.factors);
           setMetrics(data.metrics || {});
+
+          // Update graph history
+          setSentimentHistory(prev => {
+            const newPoint = {
+              time: new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+              score: data.conversion_score,
+              limit: 100
+            };
+            const newHistory = [...prev, newPoint];
+            // Keep last 30 points to keep graph readable
+            if (newHistory.length > 30) return newHistory.slice(newHistory.length - 30);
+            return newHistory;
+          });
         });
 
         socketService.onError(() => {
@@ -322,11 +339,11 @@ export default function LiveCallScreen() {
             </p>
           </div>
 
-          {/* Lead Score Card */}
+          {/* Buying Intent Graph */}
           <div className="bg-gradient-to-br from-purple-900/50 to-pink-900/50 backdrop-blur-sm border border-purple-500/20 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-4">
               <h3 className="text-white font-semibold text-sm flex items-center gap-2">
-                📊 Lead Rating
+                📈 Buying Momentum
               </h3>
               <span className={`text-xs px-2 py-1 rounded-full font-medium ${score >= 70 ? 'bg-green-500/30 text-green-300' :
                 score >= 40 ? 'bg-yellow-500/30 text-yellow-300' :
@@ -336,33 +353,37 @@ export default function LiveCallScreen() {
               </span>
             </div>
 
-            <div className="flex items-center gap-1.5 my-4">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <div key={star} className="relative cursor-default transform hover:scale-110 transition-transform duration-200">
-                  {/* Background Star (Empty) */}
-                  <svg
-                    className="w-8 h-8 text-white/10"
-                    fill="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                  </svg>
+            <div className="h-32 -mx-4 -mb-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={sentimentHistory.length > 0 ? sentimentHistory : [{ score: 0 }, { score: 0 }]}>
+                  <defs>
+                    <linearGradient id="scoreGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ec4899" stopOpacity={0.8} />
+                      <stop offset="95%" stopColor="#ec4899" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#1e1b4b', borderColor: 'rgba(255,255,255,0.1)' }}
+                    itemStyle={{ color: '#fff' }}
+                    labelStyle={{ display: 'none' }}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="score"
+                    stroke="#ec4899"
+                    strokeWidth={2}
+                    fill="url(#scoreGradient)"
+                    animationDuration={500}
+                    isAnimationActive={true}
+                  />
+                  <YAxis hide domain={[0, 100]} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
 
-                  {/* Foreground Star (Filled) - Clipped based on score */}
-                  <div
-                    className="absolute top-0 left-0 overflow-hidden"
-                    style={{ width: `${Math.max(0, Math.min(100, (score - (star - 1) * 20) * 5))}%` }}
-                  >
-                    <svg
-                      className={`w-8 h-8 ${score >= 70 ? 'text-green-400' : score >= 40 ? 'text-yellow-400' : 'text-red-400'}`}
-                      fill="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                    </svg>
-                  </div>
-                </div>
-              ))}
+            <div className="flex justify-between text-[10px] text-white/30 px-1 mt-2">
+              <span>Start</span>
+              <span>Now</span>
             </div>
           </div>
 

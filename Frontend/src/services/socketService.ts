@@ -224,4 +224,3 @@ class SocketService {
 
 const socketService = new SocketService();
 export default socketService;
-export type { Message, PredictionUpdate, TranscriptionProgress, TranscriptionComplete, TranscriptionError };
