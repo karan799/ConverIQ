@@ -112,6 +112,11 @@ class MLScoringEngine:
             "whatsapp karo", "meeting fix karo", "ghar aa jao",
             "office aa jaunga", "kal baat karte hain", "time batao",
             
+            # === GENERAL INTEREST (Added for better detection) ===
+            "interested", "sounds good", "good", "great", "okay", "sure",
+            "tell me more", "how does it work", "go ahead", "continue",
+            "listen", "listening", "right", "correct", "perfect",
+            
             # === HINDI POSITIVE ===
             "हाँ", "हाँ चाहिए", "ले लेता हूँ", "कर दीजिए",
             "प्रीमियम भर दूंगा", "पॉलिसी ले लूंगा", "शुरू कीजिए",
@@ -386,7 +391,18 @@ class MLScoringEngine:
         agent_messages = [m for m in messages if m.get('speaker') == 'Agent']
         
         if not customer_messages:
-            return {'score': 30, 'factors': ['Waiting for customer response']}
+            return {
+                'score': 30, 
+                'factors': ['Waiting for customer response'],
+                'metrics': {
+                    'sentiment_score': 15,
+                    'buying_signal_score': 0,
+                    'engagement_score': 0,
+                    'response_quality': 0,
+                    'decision_maker_score': 0,
+                    'high_value_score': 0
+                }
+            }
         
         # 1. Sentiment Analysis (30% weight)
         customer_sentiments = []
@@ -411,6 +427,14 @@ class MLScoringEngine:
         
         positive_score = min((strong_positive_count * 5) + (normal_positive_count * 2), 25)
         
+        # Boost positive score if sentiment is very high (even without specific buying keywords)
+        if avg_sentiment > 0.7:
+             positive_score += 5
+        if avg_sentiment > 0.85:
+             positive_score += 5
+             
+        positive_score = min(positive_score, 35) # Cap at 35
+        
         # Objections are penalized heavily but can be recovered
         # If sentiment is positive despite objections (e.g., "Price is high but I like it"), penalty is reduced
         base_negative_penalty = min(len(set(signals['negative_keywords'])) * 5, 20)
@@ -422,7 +446,12 @@ class MLScoringEngine:
         
         # Sentiment Multiplier: High sentiment boosts buying signal impact
         sentiment_multiplier = 1.2 if avg_sentiment > 0.7 else (0.8 if avg_sentiment < 0.3 else 1.0)
-        
+
+        # Baseline buying interest from Sentiment alone
+        # If the customer is positive, they are likely interested even if they don't say "buy"
+        if avg_sentiment > 0.6 and positive_score < 10:
+            positive_score = max(positive_score, 10 * avg_sentiment)
+
         raw_buying_score = (positive_score + urgency_score + high_value_score) * sentiment_multiplier
         buying_signal_score = max(0, raw_buying_score - negative_penalty)
         

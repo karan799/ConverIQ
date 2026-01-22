@@ -8,6 +8,7 @@ import tempfile
 import os
 import subprocess
 import numpy as np
+import re
 from typing import List, Dict, Callable, Optional
 import warnings
 warnings.filterwarnings('ignore')
@@ -33,6 +34,25 @@ class AudioProcessor:
         self._ensure_ffmpeg_in_path()
         # Use 'tiny' model for fastest transcription (39MB) - prioritize speed over accuracy
         self.whisper_model = whisper.load_model("base")  # base is more accurate, fewer hallucinations
+        
+        # Extended keywords for improved text-based speaker identification
+        self.AGENT_KEYWORDS = {
+            "help", "sir", "mam", "ma'am", "madam", "policy", "insurance", "coverage", "plan", 
+            "offer", "company", "speak with", "calling from", "recorded line", "quality assurance",
+            "manager", "supervisor", "support", "team", "benefits", "features", "solution",
+            "provide", "assist", "contact", "discount", "price", "cost", "payment", "deal",
+            "register", "sign up", "appointment", "schedule", "confirm", "information", "details",
+            # removed generic greetings to default to Client for ambiguous short inputs
+        }
+        
+        self.CLIENT_KEYWORDS = {
+            "need", "want", "buy", "looking for", "urgency", "urgent", "tomorrow", "today", 
+            "visa", "interview", "am i speaking", "don't need", "stop calling", "take me off",
+            "how did you get my number", "busy", "call me later", "what is this", "who is this",
+            "why", "expensive", "afford", "money", "budget", "think about it", "discuss",
+            "husband", "wife", "partner", "email", "send", "blocked", "spam", "remove",
+            "not interested", "later", "no thanks"
+        }
     
     def _ensure_ffmpeg_in_path(self):
         """Ensure FFmpeg is in the system PATH"""
@@ -161,7 +181,15 @@ class AudioProcessor:
                 return []
             
             # Step 4: Simple speaker diarization using heuristics
-            messages = self._simple_speaker_diarization(segments)
+            # Step 4: Speaker diarization (try clustering first, fallback to simple)
+            try:
+                # Need audio path for feature extraction
+                if AUDIO_LIBS_AVAILABLE:
+                    messages = self._cluster_speakers(segments, audio_path)
+                else:
+                    messages = self._simple_speaker_diarization(segments)
+            except Exception:
+                messages = self._simple_speaker_diarization(segments)
             
             return messages
             
@@ -182,20 +210,36 @@ class AudioProcessor:
             duration = end - start
             if duration < 0.1:  # Too short
                 return None
-                
+            
+            # Use chunks if possible, but here we load from path
             y, sr = librosa.load(audio_path, sr=16000, offset=start, duration=duration)
             
-            # Extract MFCCs
-            mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-            # Use mean and std of MFCCs as features
-            return np.concatenate([np.mean(mfcc, axis=1), np.std(mfcc, axis=1)])
+            if len(y) < 512:
+                return None
+
+            # Extract MFCCs (increased to 20 for better detail)
+            mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=20)
+            
+            # Calculate Deltas (Velocity) and Delta-Deltas (Acceleration)
+            # These capture the dynamics of speech which are crucial for speaker ID
+            mfcc_delta = librosa.feature.delta(mfcc)
+            mfcc_delta2 = librosa.feature.delta(mfcc, order=2)
+            
+            # Use mean and std of all features as the embedding vector
+            # Concatenating statistics of MFCC, Delta, and Delta-Delta
+            features = np.concatenate([
+                np.mean(mfcc, axis=1), np.std(mfcc, axis=1),
+                np.mean(mfcc_delta, axis=1), np.std(mfcc_delta, axis=1),
+                np.mean(mfcc_delta2, axis=1), np.std(mfcc_delta2, axis=1)
+            ])
+            return features
         except Exception:
             return None
 
     def _cluster_speakers(self, segments: List[Dict], audio_path: str) -> List[Dict]:
         """
-        Cluster segments into 2 speakers using K-Means on MFCC features.
-        Enforces that the FIRST segment is always assigned to 'Client'.
+        Cluster segments into 2 speakers using K-Means on refined Audio Features.
+        Uses text-based analysis to intelligently label clusters as 'Agent' or 'Client'.
         """
         if not segments:
             return []
@@ -209,11 +253,6 @@ class AudioProcessor:
             valid_indices = []
             
             for i, seg in enumerate(segments):
-                # We need to access the original audio to extract features.
-                # Since we might be in a streaming context where chunks are gone,
-                # this method works best when we have the full file or can access chunks.
-                # For this implementation, we assume audio_path is accessible.
-                
                 feat = self._extract_segment_embedding(audio_path, seg['start'], seg['end'])
                 if feat is not None:
                     features.append(feat)
@@ -222,22 +261,19 @@ class AudioProcessor:
             if len(features) < 2:
                 return self._simple_speaker_diarization(segments)
                 
-            # Normalize features
+            # Normalize features - Vital for K-Means performance
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(features)
             
             # Cluster into 2 speakers
-            kmeans = KMeans(n_clusters=2, random_state=42, n_init=10)
+            # n_init=20 for better probability of finding global optimum
+            kmeans = KMeans(n_clusters=2, random_state=42, n_init=20)
             labels = kmeans.fit_predict(X_scaled)
             
-            # --- Text-Based Role Correction (Batch) ---
-            agent_keywords = {"help", "sir", "mam", "ma'am", "madam", "policy", "insurance", "coverage", "plan", "offer", "company", "speak with"}
-            client_keywords = {"need", "want", "buy", "looking for", "urgency", "urgent", "tomorrow", "today", "visa", "interview", "am i speaking"}
-            
+            # --- Text-Based Role Correction ---
             c0_score = 0
             c1_score = 0
             
-            # Map labels to text indices
             label_cursor = 0
             
             for i, seg in enumerate(segments):
@@ -245,12 +281,14 @@ class AudioProcessor:
                     lbl = labels[label_cursor]
                     txt = seg['text'].lower()
                     
-                    for word in agent_keywords:
-                        if word in txt:
+                    # Regex matching for exact words (avoids "no" matching "know")
+                    for word in self.AGENT_KEYWORDS:
+                        if re.search(r'\b' + re.escape(word) + r'\b', txt):
                             if lbl == 0: c0_score += 1
                             else: c1_score += 1
-                    for word in client_keywords:
-                        if word in txt:
+                            
+                    for word in self.CLIENT_KEYWORDS:
+                        if re.search(r'\b' + re.escape(word) + r'\b', txt):
                             if lbl == 0: c0_score -= 1
                             else: c1_score -= 1
                     
@@ -259,13 +297,14 @@ class AudioProcessor:
             # Determine mapping
             speaker_map = {}
             if abs(c0_score - c1_score) >= 1:
-                # We have a confidence text signal
+                # Text signal is strong enough
                 if c0_score > c1_score:
                     speaker_map = {0: "Agent", 1: "Client"}
                 else:
                     speaker_map = {0: "Client", 1: "Agent"}
             else:
-                # Fallback to First Segment = Agent
+                # Fallback: Assume the very first speaker is the Agent (Standard call center flow)
+                # Or use existing heuristics if preferred.
                 first_label = labels[0]
                 speaker_map = {
                     first_label: "Agent",
@@ -279,7 +318,7 @@ class AudioProcessor:
                 speaker = "Agent" # Default fallback
                 if i in valid_indices:
                     cluster_label = labels[label_idx]
-                    speaker = speaker_map[cluster_label]
+                    speaker = speaker_map.get(cluster_label, "Agent")
                     label_idx += 1
                 elif i > 0 and messages:
                     # Inherit from previous if feature extraction failed
@@ -459,8 +498,8 @@ class AudioProcessor:
                         c1_score = 0
                         
                         # Keywords
-                        agent_keywords = {"help", "sir", "mam", "ma'am", "madam", "policy", "insurance", "coverage", "plan", "offer", "company", "speak with"}
-                        client_keywords = {"need", "want", "buy", "looking for", "urgency", "urgent", "tomorrow", "today", "visa", "interview"}
+                        # Keywords from self
+                        # Check words in current chunk segments
                         
                         # Check words in current chunk segments
                         current_chunk_labels = labels[start_feature_idx:start_feature_idx+len(new_features)]
@@ -470,18 +509,17 @@ class AudioProcessor:
                                 lbl = current_chunk_labels[idx_in_chunk]
                                 txt = segments[seg_idx]['text'].lower()
                                 
-                                # Simple voting
-                                for word in agent_keywords:
-                                    if word in txt:
+                                # Precise regex voting
+                                for word in self.AGENT_KEYWORDS:
+                                    if re.search(r'\b' + re.escape(word) + r'\b', txt):
                                         if lbl == 0: c0_score += 1 
                                         else: c1_score += 1
-                                for word in client_keywords:
-                                    if word in txt:
+                                for word in self.CLIENT_KEYWORDS:
+                                    if re.search(r'\b' + re.escape(word) + r'\b', txt):
                                         if lbl == 0: c0_score -= 1 # Evidence AGAINST being agent
                                         else: c1_score -= 1
                         
                         # Decide mapping (only if strong signal)
-                        # Higher score = More likely Agent
                         if abs(c0_score - c1_score) >= 1:
                             if c0_score > c1_score:
                                 speaker_map_override = {0: "Agent", 1: "Client"}
@@ -648,6 +686,29 @@ class AudioProcessor:
         
         return messages
     
+    def guess_speaker_from_text(self, text: str, default: str = "Client") -> str:
+        """
+        Guess speaker based on text content using keywords.
+        """
+        text_lower = text.lower()
+        agent_score = 0
+        client_score = 0
+        
+        for word in self.AGENT_KEYWORDS:
+            if word in text_lower:
+                agent_score += 1
+                
+        for word in self.CLIENT_KEYWORDS:
+            if word in text_lower:
+                client_score += 1
+                
+        if agent_score > client_score:
+            return "Agent"
+        elif client_score > agent_score:
+            return "Client"
+        
+        return default
+
     def save_uploaded_file(self, file_data, filename: str) -> str:
         """
         Save uploaded file to temporary location

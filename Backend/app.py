@@ -291,7 +291,8 @@ def upload_live_audio():
                      
                     # If valid...
                     
-                    speaker = "Client"
+                    # Guess speaker based on text content since we don't have diarization for single chunks
+                    speaker = processor.guess_speaker_from_text(text, default="Client")
                     conversation_history = conversations_db.get(call_id, {}).get('messages', [])
                     ml_result = ml_engine_instance.process_message(text, speaker, conversation_history)
                     
